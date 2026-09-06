@@ -1,0 +1,508 @@
+<title>Ungroup Replay</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --ground: #1b1928;
+    --panel: #242236;
+    --panel-2: #2c2a40;
+    --rule: #3a3852;
+    --ink: #ece9f5;
+    --ink-2: #b9b5cc;
+    --muted: #7f7b98;
+    --accent: #9fe0f6;
+    --arena: #222034;
+    --void: #14121f;
+    --res-a: #9fe0f6;
+    --res-b: #f3e59a;
+    --res-c: #f3b59b;
+    --res-d: #f39c9c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  .app {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 340px;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 14px;
+    height: 100vh;
+    padding: 14px;
+  }
+  @media (max-width: 900px) {
+    .app { grid-template-columns: 1fr; grid-template-rows: auto auto auto; height: auto; }
+  }
+  header {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  h1 {
+    font-family: "Chakra Petch", sans-serif;
+    font-size: 22px;
+    font-weight: 700;
+    margin: 0;
+    letter-spacing: 0.02em;
+  }
+  h1 span { color: var(--muted); font-weight: 500; }
+  .meta { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--muted); }
+
+  .stage {
+    position: relative;
+    background: var(--void);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .stage canvas { display: block; width: 100%; flex: 1; min-height: 0; }
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-top: 1px solid var(--rule);
+    background: var(--panel);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+  }
+  .controls button {
+    font: inherit;
+    font-family: "Chakra Petch", sans-serif;
+    font-weight: 600;
+    background: var(--panel-2);
+    color: var(--ink);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 4px 12px;
+    cursor: pointer;
+  }
+  .controls button:hover { border-color: var(--accent); }
+  .controls button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .controls button.on { background: var(--accent); color: #101018; border-color: var(--accent); }
+  .controls input[type=range] { flex: 1; accent-color: var(--accent); }
+  .controls .time { min-width: 110px; text-align: right; font-variant-numeric: tabular-nums; }
+
+  aside {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 10px 12px;
+    min-height: 0;
+  }
+  .card h2 {
+    font-family: "Chakra Petch", sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 8px;
+  }
+  .players { display: grid; gap: 8px; }
+  .card.plist { overflow-y: auto; max-height: 46vh; flex-shrink: 0; }
+  .player {
+    display: grid;
+    grid-template-columns: 14px 1fr auto;
+    grid-template-rows: auto auto;
+    column-gap: 8px;
+    row-gap: 4px;
+    align-items: center;
+    padding: 6px 8px;
+    border-radius: 4px;
+    background: var(--panel-2);
+    border-left: 3px solid transparent;
+  }
+  .player.winner { border-left-color: var(--accent); }
+  .player .sw { width: 14px; height: 14px; border-radius: 50%; grid-row: 1 / 3; }
+  .player .name { font-family: "Chakra Petch", sans-serif; font-weight: 600; font-size: 13px; }
+  .player .state { font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--muted); text-align: right; white-space: nowrap; }
+  .player .bars { grid-column: 2 / 4; display: flex; gap: 4px; }
+  .bar { flex: 1; height: 9px; background: #1a1826; border-radius: 2px; position: relative; overflow: hidden; }
+  .bar .fill { position: absolute; left: 0; top: 0; bottom: 0; }
+  .bar .carry { position: absolute; top: 0; bottom: 0; opacity: 0.45; }
+  .player .nums { grid-column: 2 / 4; font-family: "IBM Plex Mono", monospace; font-size: 10px; color: var(--muted); display: flex; gap: 4px; }
+  .player .nums span { flex: 1; font-variant-numeric: tabular-nums; }
+
+  .feed { flex: 1; overflow-y: auto; min-height: 120px; }
+  .feed ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+  .feed li { font-size: 12px; display: grid; grid-template-columns: 44px 1fr; gap: 8px; color: var(--ink-2); }
+  .feed li .t { font-family: "IBM Plex Mono", monospace; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .feed li.big { color: var(--ink); font-weight: 600; }
+  .feed .tag { display: inline-block; padding: 0 5px; border-radius: 3px; font-family: "Chakra Petch", sans-serif; font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; margin-right: 4px; vertical-align: 1px; }
+  .tag.merge { background: #2c4a5c; color: var(--accent); }
+  .tag.leave { background: #4a3a5c; color: #d9b8ff; }
+  .tag.bank { background: #2f4a2a; color: #b6e3a5; }
+  .tag.spill { background: #5c2c2c; color: var(--res-d); }
+  .tag.mine { background: #3a3852; color: var(--ink-2); }
+  .tag.win { background: var(--accent); color: #101018; }
+
+  .legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11px; color: var(--ink-2); font-family: "IBM Plex Mono", monospace; }
+  .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
+  .rules { font-size: 12px; color: var(--ink-2); margin: 0; }
+  .rules b { color: var(--ink); font-weight: 600; }
+  kbd { font-family: "IBM Plex Mono", monospace; font-size: 11px; background: var(--panel-2); border: 1px solid var(--rule); border-radius: 3px; padding: 0 4px; }
+</style>
+
+<div class="app">
+  <header>
+    <h1>Ungroup <span>replay</span></h1>
+    <div class="meta" id="meta"></div>
+  </header>
+
+  <div class="stage">
+    <canvas id="c" width="900" height="900" aria-label="Replay of an Ungroup round"></canvas>
+    <div class="controls">
+      <button id="play" aria-label="Play or pause">Play</button>
+      <button id="s05" data-speed="0.5">0.5x</button>
+      <button id="s1" data-speed="1" class="on">1x</button>
+      <button id="s2" data-speed="2">2x</button>
+      <button id="s4" data-speed="4">4x</button>
+      <input id="scrub" type="range" min="0" max="1000" value="0" aria-label="Scrub timeline">
+      <div class="time" id="time">0.0 s</div>
+    </div>
+  </div>
+
+  <aside>
+    <div class="card plist">
+      <h2>Players</h2>
+      <div class="players" id="players"></div>
+    </div>
+    <div class="card">
+      <h2>Legend</h2>
+      <div class="legend">
+        <span><i style="background:var(--res-a)"></i>A</span>
+        <span><i style="background:var(--res-b)"></i>B</span>
+        <span><i style="background:var(--res-c)"></i>C</span>
+        <span><i style="background:var(--res-d)"></i>D</span>
+        <span>dashed ring = joinable</span>
+        <span>pulsing slice = leaving</span>
+        <span>edge disc = home pad</span>
+      </div>
+      <p class="rules" style="margin-top:8px">Groups mine faster than solos and share one pool. Touching a member's pad banks the whole pool to them. Leaving takes 2 s and splits the pool. Hard bumps spill carried units. The arena shrinks. <kbd>space</kbd> play, <kbd>←</kbd> <kbd>→</kbd> step.</p>
+    </div>
+    <div class="card feed">
+      <h2>Events</h2>
+      <ul id="feed"></ul>
+    </div>
+  </aside>
+</div>
+
+<script id="replay" type="application/json">__REPLAY_JSON__</script>
+<script>
+(function () {
+  const R = JSON.parse(document.getElementById('replay').textContent);
+  const cfg = R.config;
+  const frames = R.frames;
+  const N = R.names.length;
+  const RES = ['#9fe0f6', '#f3e59a', '#f3b59b', '#f39c9c'];
+  const RESN = ['A', 'B', 'C', 'D'];
+  const PC = ['#6ef0c5', '#b28dff', '#4fd1ff', '#ff7bd5', '#f5f5f5', '#9cff57', '#ff6b6b', '#c8b6ff'];
+  const pcolor = i => PC[i % PC.length];
+  const dt = cfg.dt;
+  const T = frames[frames.length - 1].t;
+
+  document.getElementById('meta').textContent =
+    `${N} players · ${T.toFixed(0)} s · seed ${R.seed}` + (R.meta.checkpoint ? ` · ${R.meta.checkpoint}` : '') +
+    (R.winner >= 0 ? ` · winner: ${R.names[R.winner]}` : ' · no winner (time limit)');
+
+  // ---------------------------------------------------------------- events
+  const allEvents = [];
+  frames.forEach((f, fi) => f.events.forEach(e => allEvents.push(Object.assign({ fi }, e))));
+  function describe(e) {
+    const nm = i => R.names[i];
+    switch (e.kind) {
+      case 'merge': return { tag: 'merge', text: `${e.a.map(nm).join(' + ')} joined ${e.b.map(nm).join(' + ')} (group of ${e.size})` };
+      case 'leave_start': return { tag: 'leave', text: `${nm(e.player)} is leaving` };
+      case 'leave': return { tag: 'leave', text: `${nm(e.player)} left with ${e.share.reduce((a, b) => a + b, 0).toFixed(1)} units` };
+      case 'bank': return { tag: 'bank', text: `${nm(e.player)} banked ${e.amount.reduce((a, b) => a + b, 0).toFixed(1)}` + (e.group.length > 1 ? ` (group of ${e.group.length})` : '') };
+      case 'spill': return { tag: 'spill', text: `${e.a.map(nm).join('+')} hit ${e.b.map(nm).join('+')}: ${e.units} units spilled` };
+      case 'mine_dead': return { tag: 'mine', text: `Mine ${e.mine} (${RESN[R.mine_type[e.mine]]}) swallowed by the edge` };
+      case 'win': return { tag: 'win', text: `${nm(e.player)} wins`, big: true };
+      case 'timeout': return { tag: 'win', text: 'Time limit reached', big: true };
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------------- state
+  let time = 0, playing = false, speed = 1, last = null;
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const feedEl = document.getElementById('feed');
+  const playersEl = document.getElementById('players');
+  const scrub = document.getElementById('scrub');
+  const timeEl = document.getElementById('time');
+  const playBtn = document.getElementById('play');
+  let feedCount = 0;
+  const flashes = []; // {x,y,t0,kind,color}
+
+  // Player cards
+  const cards = [];
+  for (let i = 0; i < N; i++) {
+    const el = document.createElement('div');
+    el.className = 'player' + (R.winner === i ? ' winner' : '');
+    el.innerHTML = `<div class="sw" style="background:${pcolor(i)}"></div>
+      <div class="name">${R.names[i]}</div><div class="state"></div>
+      <div class="bars">${RES.map(c => `<div class="bar"><div class="carry" style="background:${c}"></div><div class="fill" style="background:${c}"></div></div>`).join('')}</div>
+      <div class="nums">${[0, 1, 2, 3].map(() => '<span></span>').join('')}</div>`;
+    playersEl.appendChild(el);
+    cards.push({ el, state: el.querySelector('.state'), fills: el.querySelectorAll('.fill'), carries: el.querySelectorAll('.carry'), nums: el.querySelectorAll('.nums span') });
+  }
+
+  function frameIndex(t) { return Math.min(frames.length - 1, Math.max(0, Math.floor(t / dt))); }
+  function key(m) { return m.slice().sort((a, b) => a - b).join(','); }
+
+  function bodyOf(f, i) { return f.bodies.find(b => b.m.includes(i)); }
+
+  function padPos(fr, i) {
+    const r = Math.max(fr.R - cfg.pad_radius - 0.02, 0.1);
+    return [r * Math.cos(R.pads[i]), r * Math.sin(R.pads[i])];
+  }
+
+  function updateFeed(fi) {
+    // Append events up to frame fi; rebuild if scrubbed backwards.
+    const upto = allEvents.filter(e => e.fi <= fi);
+    if (upto.length < feedCount) { feedEl.innerHTML = ''; feedCount = 0; }
+    for (let k = feedCount; k < upto.length; k++) {
+      const e = upto[k];
+      const d = describe(e);
+      if (!d) continue;
+      const li = document.createElement('li');
+      if (d.big) li.className = 'big';
+      li.innerHTML = `<span class="t">${e.t.toFixed(1)}s</span><span><span class="tag ${d.tag}">${d.tag}</span>${d.text}</span>`;
+      feedEl.appendChild(li);
+      if (e.kind === 'spill') flashes.push({ x: e.x, y: e.y, t0: e.t, kind: 'spill' });
+      if (e.kind === 'bank') { const fr = frames[e.fi]; const p = padPos(fr, e.player); flashes.push({ x: p[0], y: p[1], t0: e.t, kind: 'bank', color: pcolor(e.player) }); }
+      if (e.kind === 'merge') { const fr = frames[e.fi]; const b = bodyOf(fr, e.a[0]); if (b) flashes.push({ x: b.x, y: b.y, t0: e.t, kind: 'merge' }); }
+    }
+    feedCount = upto.length;
+    feedEl.scrollTop = feedEl.scrollHeight;
+  }
+
+  function updateCards(fr) {
+    for (let i = 0; i < N; i++) {
+      const p = fr.players[i];
+      const b = bodyOf(fr, i);
+      const c = cards[i];
+      const need = R.needs[i];
+      for (let t = 0; t < 4; t++) {
+        const banked = Math.min(1, p.banked[t] / need[t]);
+        const carry = b ? Math.min(1 - banked, (b.pool[t] / b.m.length) / need[t]) : 0;
+        c.fills[t].style.width = (banked * 100).toFixed(1) + '%';
+        c.carries[t].style.left = (banked * 100).toFixed(1) + '%';
+        c.carries[t].style.width = (carry * 100).toFixed(1) + '%';
+        c.nums[t].textContent = `${p.banked[t].toFixed(0)}/${need[t]}`;
+      }
+      let st = b && b.m.length > 1 ? `group ${b.m.length}` : 'solo';
+      if (p.leaving >= 0) st += ' · leaving';
+      else if (p.join) st += ' · open';
+      if (b && b.pool.reduce((a, x) => a + x, 0) > 0.5) st += ` · carry ${b.pool.reduce((a, x) => a + x, 0).toFixed(0)}`;
+      c.state.textContent = st;
+    }
+  }
+
+  // ---------------------------------------------------------------- drawing
+  function draw() {
+    const W = canvas.clientWidth, H = canvas.clientHeight;
+    if (canvas.width !== W * devicePixelRatio || canvas.height !== H * devicePixelRatio) {
+      canvas.width = W * devicePixelRatio; canvas.height = H * devicePixelRatio;
+    }
+    ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    const S = Math.min(W, H) * 0.47;
+    const cx = W / 2, cy = H / 2;
+    const X = x => cx + x * S, Y = y => cy + y * S;
+
+    const fi = frameIndex(time);
+    const fr = frames[fi];
+    const nx = frames[Math.min(frames.length - 1, fi + 1)];
+    const a = Math.min(1, Math.max(0, (time - fr.t) / dt));
+
+    // Arena
+    ctx.fillStyle = '#222034';
+    ctx.beginPath(); ctx.arc(cx, cy, fr.R * S, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#4a4766'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(cx, cy, fr.R * S, 0, Math.PI * 2); ctx.stroke();
+    // Faint original boundary
+    ctx.strokeStyle = '#2b2940'; ctx.setLineDash([4, 6]);
+    ctx.beginPath(); ctx.arc(cx, cy, S, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+
+    // Pads
+    for (let i = 0; i < N; i++) {
+      const p = padPos(fr, i);
+      ctx.fillStyle = pcolor(i);
+      ctx.globalAlpha = 0.85;
+      ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), cfg.pad_radius * S, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#1b1928';
+      ctx.font = `600 ${Math.max(9, 0.05 * S)}px "Chakra Petch", sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(String(i), X(p[0]), Y(p[1]) + 1);
+    }
+
+    // Mines
+    for (let m = 0; m < R.mine_pos.length; m++) {
+      const [mx, my] = R.mine_pos[m];
+      const alive = fr.alive[m];
+      const stock = fr.mines[m] / cfg.mine_cap;
+      const col = RES[R.mine_type[m]];
+      ctx.beginPath(); ctx.arc(X(mx), Y(my), cfg.mine_radius * S, 0, Math.PI * 2);
+      ctx.fillStyle = alive ? '#2f2d45' : '#1e1c2c'; ctx.fill();
+      ctx.strokeStyle = alive ? col : '#3a3852'; ctx.lineWidth = 2; ctx.stroke();
+      if (alive) {
+        ctx.beginPath(); ctx.arc(X(mx), Y(my), cfg.mine_radius * S * Math.sqrt(stock) * 0.9, 0, Math.PI * 2);
+        ctx.fillStyle = col; ctx.globalAlpha = 0.8; ctx.fill(); ctx.globalAlpha = 1;
+      } else {
+        ctx.strokeStyle = '#3a3852'; ctx.lineWidth = 2;
+        const r = cfg.mine_radius * S * 0.5;
+        ctx.beginPath(); ctx.moveTo(X(mx) - r, Y(my) - r); ctx.lineTo(X(mx) + r, Y(my) + r);
+        ctx.moveTo(X(mx) + r, Y(my) - r); ctx.lineTo(X(mx) - r, Y(my) + r); ctx.stroke();
+      }
+      ctx.fillStyle = alive ? '#1b1928' : '#3a3852';
+      ctx.font = `600 ${Math.max(9, 0.045 * S)}px "Chakra Petch", sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(RESN[R.mine_type[m]], X(mx), Y(my) + 1);
+    }
+
+    // Pickups
+    for (const [px, py, tp] of fr.picks) {
+      ctx.fillStyle = RES[tp];
+      ctx.beginPath(); ctx.arc(X(px), Y(py), 0.012 * S, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // Bodies (interpolated when the same body exists in the next frame)
+    const nextByKey = {};
+    nx.bodies.forEach(b => { nextByKey[key(b.m)] = b; });
+    for (const b of fr.bodies) {
+      const nb = nextByKey[key(b.m)];
+      const bx = nb ? b.x + (nb.x - b.x) * a : b.x;
+      const by = nb ? b.y + (nb.y - b.y) * a : b.y;
+      const n = b.m.length;
+      const r = cfg.solo_radius * Math.sqrt(n) * S;
+      const px = X(bx), py = Y(by);
+      const members = b.m.slice().sort((u, v) => u - v);
+      const anyJoin = members.some(i => fr.players[i].join);
+      // Slices per member
+      const slice = Math.PI * 2 / n;
+      members.forEach((i, k) => {
+        const leaving = fr.players[i].leaving >= 0;
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.arc(px, py, r, k * slice - Math.PI / 2, (k + 1) * slice - Math.PI / 2);
+        ctx.closePath();
+        ctx.fillStyle = pcolor(i);
+        ctx.globalAlpha = leaving ? 0.45 + 0.4 * Math.abs(Math.sin(time * 8)) : 0.9;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      });
+      ctx.strokeStyle = '#101018'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.stroke();
+      if (anyJoin) {
+        ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.setLineDash([3, 3]);
+        ctx.beginPath(); ctx.arc(px, py, r + 3, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+      }
+      // Direction arrows per member
+      members.forEach(i => {
+        const d = fr.players[i].dir;
+        if (Math.abs(d[0]) + Math.abs(d[1]) < 0.01) return;
+        ctx.strokeStyle = pcolor(i); ctx.lineWidth = 2; ctx.globalAlpha = 0.9;
+        ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + d[0] * (r + 8), py + d[1] * (r + 8)); ctx.stroke();
+        ctx.globalAlpha = 1;
+      });
+      // Carried pool as a small stacked bar under the body
+      const total = b.pool.reduce((s, x) => s + x, 0);
+      if (total > 0.5) {
+        const w = Math.max(r * 1.6, 18), h = 4;
+        let x0 = px - w / 2, y0 = py + r + 5;
+        ctx.fillStyle = '#101018'; ctx.fillRect(x0 - 1, y0 - 1, w + 2, h + 2);
+        const scale = w / Math.max(total, 20);
+        for (let t = 0; t < 4; t++) {
+          const ww = b.pool[t] * scale;
+          ctx.fillStyle = RES[t]; ctx.fillRect(x0, y0, ww, h); x0 += ww;
+        }
+      }
+      // Intent dots for members
+      members.forEach((i, k) => {
+        const ang = (k + 0.5) * slice - Math.PI / 2;
+        const ix = px + Math.cos(ang) * r * 0.55, iy = py + Math.sin(ang) * r * 0.55;
+        ctx.fillStyle = RES[fr.players[i].intent];
+        ctx.beginPath(); ctx.arc(ix, iy, Math.max(2, r * 0.16), 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#101018'; ctx.lineWidth = 1; ctx.stroke();
+      });
+    }
+
+    // Flashes
+    for (let k = flashes.length - 1; k >= 0; k--) {
+      const f = flashes[k];
+      const age = time - f.t0;
+      if (age < 0 || age > 0.8) { if (age > 0.8 || age < -1) flashes.splice(k, 1); continue; }
+      const p = age / 0.8;
+      ctx.globalAlpha = 1 - p;
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = f.kind === 'spill' ? '#f39c9c' : f.kind === 'bank' ? f.color : '#9fe0f6';
+      ctx.beginPath(); ctx.arc(X(f.x), Y(f.y), (0.03 + 0.12 * p) * S, 0, Math.PI * 2); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    // Clock
+    ctx.fillStyle = '#7f7b98';
+    ctx.font = `500 ${Math.max(11, 0.05 * S)}px "IBM Plex Mono", monospace`;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    ctx.fillText(`${time.toFixed(1)} s`, 12, 10);
+    if (fr.R < 0.999) ctx.fillText(`arena ${(fr.R * 100).toFixed(0)}%`, 12, 10 + Math.max(11, 0.05 * S) * 1.3);
+
+    updateCards(fr);
+    updateFeed(fi);
+    scrub.value = Math.round(time / T * 1000);
+    timeEl.textContent = `${time.toFixed(1)} / ${T.toFixed(0)} s`;
+  }
+
+  function loop(ts) {
+    if (last === null) last = ts;
+    const el = (ts - last) / 1000;
+    last = ts;
+    if (playing) {
+      time += el * speed;
+      if (time >= T) { time = T; playing = false; playBtn.textContent = 'Replay'; }
+    }
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // ---------------------------------------------------------------- controls
+  playBtn.addEventListener('click', () => {
+    if (time >= T) time = 0;
+    playing = !playing;
+    playBtn.textContent = playing ? 'Pause' : 'Play';
+  });
+  document.querySelectorAll('[data-speed]').forEach(b => b.addEventListener('click', () => {
+    speed = parseFloat(b.dataset.speed);
+    document.querySelectorAll('[data-speed]').forEach(x => x.classList.toggle('on', x === b));
+  }));
+  scrub.addEventListener('input', () => { time = scrub.value / 1000 * T; });
+  window.addEventListener('keydown', e => {
+    if (e.code === 'Space') { e.preventDefault(); playBtn.click(); }
+    if (e.code === 'ArrowRight') time = Math.min(T, time + (e.shiftKey ? 5 : 1));
+    if (e.code === 'ArrowLeft') time = Math.max(0, time - (e.shiftKey ? 5 : 1));
+  });
+  const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+  playing = !mq.matches;
+  playBtn.textContent = playing ? 'Pause' : 'Play';
+  requestAnimationFrame(loop);
+})();
+</script>
