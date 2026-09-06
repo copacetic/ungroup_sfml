@@ -13,3 +13,6 @@ add_executable(ug-test
 )
 
 target_link_libraries(ug-test PRIVATE server-lib common-lib client-lib catch)
+
+# Old Catch2 v2 uses SIGSTKSZ as a constant, which glibc 2.34+ no longer allows
+target_compile_definitions(ug-test PRIVATE CATCH_CONFIG_NO_POSIX_SIGNALS)

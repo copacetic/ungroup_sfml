@@ -86,6 +86,21 @@ The server currently doesn't run on windows ([#194](https://github.com/SourenP/u
 .\build\src\server\ug-server.exe
 ```
 
+## Offline simulator
+
+`ug-sim` runs bot-vs-bot games with no networking and no window. It is useful for balance
+experiments, for checking rule changes, and as the starting point of an RL environment.
+
+```
+./build/src/sim/ug-sim --games 20 1 1 2 2
+```
+
+Each positional argument is one bot: `0` random, `1` nearest-greedy, `2` groupie,
+`3` nearest-greedy with joinable switched on. Options: `--games N`, `--max-ticks T`,
+`--bot-period K` (ticks between bot decisions), `--verbose`.
+
+See [docs/PRD.md](docs/PRD.md) for an analysis of the game's current state and design.
+
 ## Testing
 
 - Build with the cmake flag `-GBUILD_TESTS=TRUE`

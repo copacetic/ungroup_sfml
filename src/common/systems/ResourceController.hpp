@@ -6,7 +6,11 @@
 #define ResourceController_hpp
 
 #include <array>
+#include <cstdint>
+#include <string>
+#include <tuple>
 #include <unordered_map>
+#include <vector>
 
 #include <SFML/Network.hpp>
 
