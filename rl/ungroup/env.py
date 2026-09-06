@@ -84,7 +84,7 @@ class UngroupEnv:
         m = self.cfg.n_mines
         return 29 + (k - 1) * 16 + m * 8 + N_PICKUPS_OBS * 6
 
-    def observe(self):
+    def observe_slow(self):
         g = self.game
         cfg = self.cfg
         k = self.n_agents
@@ -155,6 +155,73 @@ class UngroupEnv:
                 f.extend([0.0] * 6)
             obs[i] = np.asarray(f, dtype=np.float32)
         return obs
+
+    def observe(self):
+        """Vectorized observation builder (same layout as observe_slow)."""
+        g = self.game
+        cfg = self.cfg
+        k = self.n_agents
+        tfrac = g.t / cfg.time_limit
+        bodies = [g.body_of(i) for i in range(k)]
+        body_id = np.array([id(b) for b in bodies])
+        P = np.array([b.pos for b in bodies])              # (k,2)
+        V = np.array([b.vel for b in bodies])              # (k,2)
+        NB = np.array([b.n for b in bodies], dtype=float)  # (k,)
+        POOL = np.array([b.pool for b in bodies])          # (k,4)
+        PT = POOL.sum(1)                                   # (k,)
+        NEED = np.array([p.need for p in g.players])
+        BANK = np.array([p.banked for p in g.players])
+        INT = np.zeros((k, TYPES)); INT[np.arange(k), [p.intent for p in g.players]] = 1
+        JOIN = np.array([1.0 if p.joinable else 0.0 for p in g.players])
+        LT = np.array([p.leave_timer for p in g.players])
+        LEAVING = (LT >= 0).astype(float)
+        PADS = np.array([g.pad_pos(i) for i in range(k)])
+        PROG = np.mean(np.minimum(BANK / NEED, 1.0), axis=1)
+
+        own = np.concatenate([
+            P, V, NEED / cfg.need_primary, np.minimum(BANK / NEED, 1.5), INT,
+            JOIN[:, None], (NB / cfg.max_group)[:, None], POOL / 20.0,
+            np.where(LT >= 0, LT / cfg.leave_time, 0.0)[:, None],
+            np.full((k, 1), g.arena_radius), np.full((k, 1), tfrac),
+            PADS - P, (PT / 40.0)[:, None], PROG[:, None],
+        ], axis=1)
+
+        # Others sorted by distance (excluding self).
+        diff = P[None, :, :] - P[:, None, :]               # (k,k,2) diff[i,j] = P[j]-P[i]
+        dist = np.linalg.norm(diff, axis=2)
+        dist[np.arange(k), np.arange(k)] = np.inf
+        order = np.argsort(dist, axis=1, kind='stable')[:, : k - 1]      # (k,k-1)
+        rel = np.take_along_axis(diff, order[:, :, None], axis=1)  # (k,k-1,2)
+        same = (body_id[order] == body_id[:, None]).astype(float)
+        padrel = PADS[order] - P[:, None, :]
+        others = np.concatenate([
+            rel, V[order], (NB[order] / cfg.max_group)[:, :, None], JOIN[order][:, :, None], INT[order],
+            same[:, :, None], LEAVING[order][:, :, None], PROG[order][:, :, None], padrel,
+            (PT[order] / 40.0)[:, :, None],
+        ], axis=2).reshape(k, -1)
+
+        m = cfg.n_mines
+        mrel = g.mine_pos[None, :, :] - P[:, None, :]      # (k,m,2)
+        moh = np.zeros((m, TYPES)); moh[np.arange(m), g.mine_type] = 1
+        mines = np.concatenate([
+            mrel, np.broadcast_to(moh, (k, m, TYPES)),
+            np.broadcast_to((g.mine_stock / cfg.mine_cap)[None, :, None], (k, m, 1)),
+            np.broadcast_to(g.mine_alive.astype(float)[None, :, None], (k, m, 1)),
+        ], axis=2).reshape(k, -1)
+
+        picks = np.zeros((k, N_PICKUPS_OBS, 6))
+        npk = len(g.pick_ttl)
+        if npk:
+            prel = g.pick_pos[None, :, :] - P[:, None, :]  # (k,npk,2)
+            pd = np.linalg.norm(prel, axis=2)
+            po = np.argsort(pd, axis=1, kind='stable')[:, :N_PICKUPS_OBS]
+            cnt = min(npk, N_PICKUPS_OBS)
+            poh = np.zeros((npk, TYPES)); poh[np.arange(npk), g.pick_type] = 1
+            picks[:, :cnt, :2] = np.take_along_axis(prel, po[:, :, None], axis=1)
+            picks[:, :cnt, 2:] = poh[po]
+        picks = picks.reshape(k, -1)
+
+        return np.concatenate([own, others, mines, picks], axis=1).astype(np.float32)
 
 
 def direction_to_move(v):
