@@ -32,6 +32,16 @@ SEAT_POLICY, SEAT_SNAPSHOT, SEAT_BOT = 0, 1, 2
 # --------------------------------------------------------------------------- network
 
 
+def load_policy(path, obs_dim):
+    """Build a Policy whose width matches the checkpoint and load it."""
+    sd = torch.load(path, map_location="cpu")
+    hidden = sd["body.0.weight"].shape[0]
+    policy = Policy(obs_dim, hidden=hidden)
+    policy.load_state_dict(sd)
+    policy.eval()
+    return policy
+
+
 class Policy(nn.Module):
     def __init__(self, obs_dim, hidden=256):
         super().__init__()
@@ -169,6 +179,7 @@ def main():
     ap.add_argument("--out", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints"))
     ap.add_argument("--resume", default=None)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--hidden", type=int, default=256)
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
@@ -178,9 +189,11 @@ def main():
     probe = UngroupEnv(Config(**cfg_kwargs))
     obs_dim, n = probe.obs_dim, probe.n_agents
 
-    policy = Policy(obs_dim)
     if args.resume:
-        policy.load_state_dict(torch.load(args.resume))
+        policy = load_policy(args.resume, obs_dim)
+        policy.train()
+    else:
+        policy = Policy(obs_dim, hidden=args.hidden)
     opt = torch.optim.Adam(policy.parameters(), lr=args.lr, eps=1e-5)
     snapshots = [copy.deepcopy(policy)]
 

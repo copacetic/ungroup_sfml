@@ -16,7 +16,7 @@ import numpy as np
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from train_ppo import Policy  # noqa: E402
+from train_ppo import load_policy  # noqa: E402
 from ungroup import Config, UngroupEnv  # noqa: E402
 from ungroup.bots import BOTS  # noqa: E402
 
@@ -25,9 +25,7 @@ def play(checkpoint, seats, seed=0, deterministic=False, decide_every=2, cfg_kwa
     cfg = Config(n_players=len(seats), **(cfg_kwargs or {}))
     env = UngroupEnv(cfg, seed=seed, decide_every=decide_every, record=True)
     obs = env.reset(seed=seed)
-    policy = Policy(env.obs_dim)
-    policy.load_state_dict(torch.load(checkpoint, map_location="cpu"))
-    policy.eval()
+    policy = load_policy(checkpoint, env.obs_dim)
     bots = [None if s == "policy" else BOTS[s]() for s in seats]
     done = False
     torch.manual_seed(seed)

@@ -12,7 +12,7 @@ import numpy as np
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from train_ppo import Policy  # noqa: E402
+from train_ppo import load_policy  # noqa: E402
 from ungroup import Config, UngroupEnv  # noqa: E402
 from ungroup.bots import BOTS  # noqa: E402
 
@@ -74,9 +74,7 @@ if __name__ == "__main__":
     ap.add_argument("--players", type=int, default=6)
     a = ap.parse_args()
     probe = UngroupEnv(Config(n_players=a.players))
-    policy = Policy(probe.obs_dim)
-    policy.load_state_dict(torch.load(a.checkpoint, map_location="cpu"))
-    policy.eval()
+    policy = load_policy(a.checkpoint, probe.obs_dim)
     torch.set_num_threads(1)
     n = a.players
     half = n // 2
