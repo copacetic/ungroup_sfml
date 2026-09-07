@@ -147,6 +147,17 @@ was written, and the win-rate columns of the training log were rising through up
 self-play under v3: 137 merges, 144 spills and 192 banks in a round, against 253, 220 and 114 for the v2
 snapshot, so large lobbies also shifted from demolition derby toward mining and banking.
 
+**Why the spill counts were misleading.** Classifying the spills in the recorded v3 rounds by the
+bodies' loads before impact: in the six-agent round 29 of 34 spills were between two solo bodies carrying
+under three units, 20 of them dropped nothing at all, and only 5 were an empty body hitting a laden one.
+The twenty-agent round had the same shape (121 of 144 light-on-light, 63 with nothing dropped). The agents
+were not ramming for loot; they were bumping into each other at full speed near contested mines, and the
+one-second stun on every bump was the movement tax that let the scripted bots, which stop cleanly, outscore
+them. The core now stuns and counts a collision only when at least one unit hits the floor. The ladder
+ordering is unchanged, and the same v3 snapshot re-evaluated under the fix went from 0.54 to 0.59 against
+the bail bot with real spills in self-play at 14 per round. Run `rl/checkpoints/v4` retrains from scratch
+under the fixed rules.
+
 ## 6. The v2 training stack
 
 `rl/train_v2.py` implements the architecture-review recommendations: entity encoder with masked pooling,
