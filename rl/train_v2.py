@@ -142,7 +142,7 @@ class Policy(nn.Module):
             dist = torch.distributions.Categorical(logits=lg)
             logps.append(dist.log_prob(actions[:, k]))
             ents.append(dist.entropy())
-        return torch.stack(logps, -1), torch.stack(ents, -1)
+        return torch.stack(logps, -1), torch.stack(ents, -1), logits
 
 
 class Critic(nn.Module):
@@ -315,6 +315,9 @@ def main():
     ap.add_argument("--threads", type=int, default=4)
     ap.add_argument("--out", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints", "v2"))
     ap.add_argument("--resume", default=None)
+    ap.add_argument("--anchor-kl", type=float, default=0.0,
+                    help="weight of KL(anchor || policy) toward the frozen warm-start policy; stops PPO drifting off the imitation prior")
+    ap.add_argument("--anchor-heads", default="0", help="comma list of head indices the anchor applies to (0 move, 1 join, 2 leave, 3 intent)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--set", action="append", help="override a Config field, e.g. --set mine_rate=0.12")
     args = ap.parse_args()
@@ -362,6 +365,8 @@ def main():
             warmup(policy, batch, args, log)
             save_checkpoint(os.path.join(args.out, "warmup.pt"), policy, None, cfg, 0)
     league = [("warmup", copy.deepcopy(policy).eval())]
+    anchor = copy.deepcopy(policy).eval() if args.anchor_kl > 0 else None
+    anchor_heads = [int(x) for x in args.anchor_heads.split(",") if x != ""]
     opt = torch.optim.Adam(policy.parameters(), lr=args.lr, eps=1e-5)
     copt = torch.optim.Adam(critic.parameters(), lr=args.lr, eps=1e-5)
     vnorm = RunningNorm()
@@ -488,13 +493,23 @@ def main():
                 copt.zero_grad(); vl.backward(); nn.utils.clip_grad_norm_(critic.parameters(), 1.0); copt.step()
                 vl_acc += vl.item()
                 if not critic_only:
-                    logps, ents = policy.evaluate(f_obs[idx], f_act[idx])
+                    logps, ents, p_logits = policy.evaluate(f_obs[idx], f_act[idx])
                     logp = logps.sum(-1)
                     ratio = torch.exp(logp - f_logp[idx])
                     a = f_adv[idx]
                     pl = -torch.min(ratio * a, torch.clamp(ratio, 1 - args.clip, 1 + args.clip) * a).mean()
                     ent_term = sum(ent_coef[k] * ents[:, k].mean() / ent_norm[k] for k in range(4))
                     loss = pl - ent_term
+                    if anchor is not None:
+                        with torch.no_grad():
+                            a_logits = anchor.forward(f_obs[idx])
+                        akl = 0.0
+                        for k in anchor_heads:
+                            a_lp = F.log_softmax(a_logits[k], -1)
+                            p_lp = F.log_softmax(p_logits[k], -1)
+                            fin = torch.isfinite(a_lp)   # masked classes are -inf on both sides
+                            akl = akl + (torch.where(fin, a_lp.exp() * (a_lp - p_lp), torch.zeros_like(a_lp))).sum(-1).mean()
+                        loss = loss + args.anchor_kl * akl
                     opt.zero_grad(); loss.backward(); nn.utils.clip_grad_norm_(policy.parameters(), 1.0); opt.step()
                     with torch.no_grad():
                         kl = ((ratio - 1) - torch.log(ratio)).mean().item()
