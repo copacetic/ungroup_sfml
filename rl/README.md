@@ -1,4 +1,4 @@
-# Ungroup v2: rules core, RL environment, and replay viewer
+# Ungroup v2: rules core, RL environment, replay viewer, and play server
 
 This directory is a self-contained prototype of the redesigned "carry, bank, spill" rules
 described in `docs/PRD.md` and the design discussion that followed it. It does not depend on
@@ -66,3 +66,25 @@ wins per seat relative to chance (1.0 means a seat of that type wins exactly as 
 uniformly random seat would); `finish_rate` is the fraction of rounds that ended with a winner
 rather than at the time limit; `avg_group`, `merges`, `leaves`, `spills`, `banks` are per-round
 averages that describe how much alliance behavior is happening.
+
+
+## v2 (September 2026): canonical C++ core, new rules, new trainer
+
+After the design review in `docs/PLAN_REVIEW_2026-09.md` the rules moved to `native/ungroup.cpp` as the
+only implementation (`ungroup/core.py` is the original Python prototype and is no longer the source of
+truth). The v2 tools:
+
+| Command | What it does |
+| --- | --- |
+| `python3 rl/ladder_native.py --gates` | Rules pacing gates: scripted lineups with alliance statistics and paired seeds |
+| `python3 rl/ladder_native.py --set mine_rate=0.1 --games 48 bail bail bail loyal loyal loyal` | Any lineup under any constants |
+| `python3 rl/train_v2.py --dr --out rl/checkpoints/v2` | DAgger warm start, critic warm-up, then PPO with the entity encoder, privileged critic, league, and rule randomisation |
+| `python3 rl/play_v2.py eval --checkpoint rl/checkpoints/v2/latest.pt` | Paired-seed evaluation against training and held-out bots |
+| `python3 rl/play_v2.py sweep --checkpoint ...` | Margin over the ladder under rule-constant perturbations (memorisation check) |
+| `python3 rl/play_v2.py record --checkpoint ... --tries 6 --out replay.json` | Record a replay with the action log; build the page with `viewer/build_viewer.py` |
+| `python3 rl/play_server.py --humans 2 --agents 2 --checkpoint ... --bots bail,loyal` | Play in a browser: serves `viewer/play.html`, one room, rounds restart, replays saved |
+
+Scripted bots: `solo` (never groups), `bail` (groups, leaves when its share is worth taking or a partner's
+pad is near), `loyal` (never leaves, banks at the pad of the member furthest behind), and two held-out
+bots never used in training: `kidnap` (drags laden groups to its own pad) and `rammer` (spills laden
+bodies and collects the floor).

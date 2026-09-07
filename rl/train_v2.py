@@ -222,6 +222,18 @@ def dr_ranges(cfg):
 # --------------------------------------------------------------------------- warm start
 
 
+def masked_smooth_ce(logits, target, smooth):
+    """Cross-entropy with label smoothing spread only over classes whose logit is finite."""
+    allowed = torch.isfinite(logits)
+    logp = torch.log_softmax(logits, -1)
+    logp = torch.where(allowed, logp, torch.zeros_like(logp))
+    n_allowed = allowed.sum(-1, keepdim=True).clamp(min=1).float()
+    tgt = torch.zeros_like(logp)
+    tgt.scatter_(1, target[:, None], 1.0)
+    tgt = tgt * (1 - smooth) + allowed.float() * (smooth / n_allowed)
+    return -(tgt * logp).sum(-1).mean()
+
+
 def warmup(policy, batch, args, log):
     """DAgger from the bail bot: labels come from ugb_bot_actions for every external seat."""
     E, n, D = batch.E, batch.n, batch.obs_dim
@@ -266,7 +278,7 @@ def warmup(policy, batch, args, log):
                 loss = 0.0
                 for k, lg in enumerate(logits):
                     smooth = 0.0 if k == 0 else args.warmup_smooth
-                    loss = loss + F.cross_entropy(lg, Yt[idx, k], label_smoothing=smooth)
+                    loss = loss + masked_smooth_ce(lg, Yt[idx, k], smooth)
                     acc[k] += (lg.argmax(-1) == Yt[idx, k]).float().sum().item()
                 opt.zero_grad(); loss.backward(); nn.utils.clip_grad_norm_(policy.parameters(), 1.0); opt.step()
                 tot += loss.item() * len(idx)

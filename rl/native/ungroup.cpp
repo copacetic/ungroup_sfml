@@ -286,6 +286,7 @@ struct Game {
             int move = act[i * 4], joinable = act[i * 4 + 1], leave = act[i * 4 + 2], intent = act[i * 4 + 3];
             Player& p = players[i];
             if (move == 0) p.dir = {0, 0};
+            else if (move == 9) { /* keep the direction set through set_direction (human seats) */ }
             else { double a = 2 * PI * (move - 1) / 8; p.dir = {std::cos(a), std::sin(a)}; }
             p.joinable = joinable != 0;
             int bi = body_index(i);
