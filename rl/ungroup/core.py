@@ -46,8 +46,8 @@ class Config:
     solo_radius: float = 0.045
     mine_radius: float = 0.08
     mine_cap: float = 30.0
-    mine_regen: float = 0.5  # units per second
-    mine_rate: float = 0.15  # units per second for a solo body; scales n ** mine_exp
+    mine_regen: float = 0.6  # units per second
+    mine_rate: float = 0.19  # units per second for a solo body; scales n ** mine_exp
     mine_exp: float = 2.0
     pad_radius: float = 0.06
     need_primary: int = 18
