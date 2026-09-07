@@ -12,8 +12,8 @@
 //   (members with no direction "follow" instead of braking).
 // - Mines yield mine_rate * n^mine_exp per second while a body touches them (not while stunned).
 // - Nothing counts until banked: touching a member's home pad banks the whole pool to them.
-// - Leaving is a HELD action: the leave timer runs only while the member keeps requesting it,
-//   and is cancelled when they stop. On detaching, the leaver takes a per-type share weighted
+// - Leaving is a HELD action: the leave timer runs while the member keeps requesting it and is
+//   cancelled once they have stopped requesting it for leave_hold seconds. On detaching, the leaver takes a per-type share weighted
 //   intent_weight:1 toward their declared intent, minus a forfeit that stays with the group. They
 //   are ejected opposite to the group's motion, their joinable flag is forced off, they cannot
 //   join anyone for join_cooldown seconds and cannot rejoin their former partners for
@@ -60,10 +60,11 @@ struct Cfg {
     double shrink_start = 0.5, final_radius = 0.5, restitution = 0.5;
     int max_group = 6;
     double join_cooldown = 3.0, partner_cooldown = 10.0, leave_forfeit = 0.15, intent_weight = 3.0, stun_time = 1.0;
+    double leave_hold = 1.0;  // seconds a leave request stays active after the last leave=1 decision
     // reward
     double carried_shaping = 2.0, win_bonus = 10.0, lose_penalty = 2.0, relative_reward = 0.5;
 };
-constexpr int CFG_LEN = 34;
+constexpr int CFG_LEN = 35;
 
 void cfg_fill(Cfg& c, const double* a, int len) {
     if (len < CFG_LEN) return;
@@ -76,7 +77,7 @@ void cfg_fill(Cfg& c, const double* a, int len) {
     c.pickup_ttl = a[k++]; c.max_pickups = (int)a[k++]; c.shrink_start = a[k++]; c.final_radius = a[k++];
     c.restitution = a[k++]; c.max_group = (int)a[k++];
     c.join_cooldown = a[k++]; c.partner_cooldown = a[k++]; c.leave_forfeit = a[k++]; c.intent_weight = a[k++];
-    c.stun_time = a[k++];
+    c.stun_time = a[k++]; c.leave_hold = a[k++];
     c.carried_shaping = a[k++]; c.win_bonus = a[k++]; c.lose_penalty = a[k++]; c.relative_reward = a[k++];
 }
 
@@ -90,7 +91,7 @@ void cfg_dump(const Cfg& c, double* a) {
     a[k++] = c.pickup_ttl; a[k++] = c.max_pickups; a[k++] = c.shrink_start; a[k++] = c.final_radius;
     a[k++] = c.restitution; a[k++] = c.max_group;
     a[k++] = c.join_cooldown; a[k++] = c.partner_cooldown; a[k++] = c.leave_forfeit; a[k++] = c.intent_weight;
-    a[k++] = c.stun_time;
+    a[k++] = c.stun_time; a[k++] = c.leave_hold;
     a[k++] = c.carried_shaping; a[k++] = c.win_bonus; a[k++] = c.lose_penalty; a[k++] = c.relative_reward;
 }
 
@@ -121,6 +122,7 @@ struct Player {
     bool joinable = false;
     Vec dir;
     double leave_timer = -1.0;   // seconds remaining, < 0 when not leaving
+    double leave_last_req = -1e9; // time of the last leave=1 decision
     double join_cooldown = 0;    // seconds until this player may merge again
     double group_since = 0;      // time the current membership started (t)
     double last_bank_t = 0;
@@ -293,8 +295,9 @@ struct Game {
             int n = bodies[bi].n();
             if (intent > 0 && n == 1) p.intent = intent - 1;  // locked while grouped
             if (leave && n > 1) {
+                p.leave_last_req = t;
                 if (p.leave_timer < 0) { p.leave_timer = cfg.leave_time; event("\"kind\":\"leave_start\",\"player\":" + std::to_string(i)); }
-            } else if (!leave && p.leave_timer >= 0) {
+            } else if (!leave && p.leave_timer >= 0 && t - p.leave_last_req > cfg.leave_hold) {
                 p.leave_timer = -1.0;
                 stats.cancels++;
                 event("\"kind\":\"leave_cancel\",\"player\":" + std::to_string(i));

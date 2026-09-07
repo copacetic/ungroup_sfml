@@ -139,6 +139,12 @@
   .player .nums { grid-column: 2 / 4; font-family: "IBM Plex Mono", monospace; font-size: 10px; color: var(--muted); display: flex; gap: 4px; }
   .player .nums span { flex: 1; font-variant-numeric: tabular-nums; }
 
+  .alli { display: grid; gap: 5px; font-size: 12px; max-height: 24vh; overflow-y: auto; }
+  .alli .row { display: grid; grid-template-columns: 52px 1fr auto; gap: 8px; align-items: baseline; color: var(--ink-2); }
+  .alli .row.live { color: var(--ink); }
+  .alli .who i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 3px; vertical-align: -1px; }
+  .alli .t { font-family: "IBM Plex Mono", monospace; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .alli .end { font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--muted); white-space: nowrap; }
   .feed { flex: 1; overflow-y: auto; min-height: 120px; }
   .feed ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
   .feed li { font-size: 12px; display: grid; grid-template-columns: 44px 1fr; gap: 8px; color: var(--ink-2); }
@@ -194,7 +200,11 @@
         <span>pulsing slice = leaving</span>
         <span>edge disc = home pad</span>
       </div>
-      <p class="rules" style="margin-top:8px">Groups mine much faster than solos and share one pool. Touching a member's pad banks the whole pool to that member. Leaving must be held for 2 s, splits the pool 3:1 toward your declared colour minus a 25% forfeit, and locks you out of joining for a while. Hard bumps spill carried units and stun both bodies. The arena shrinks. At the time limit the leader wins. <kbd>space</kbd> play, <kbd>←</kbd> <kbd>→</kbd> step.</p>
+      <p class="rules" style="margin-top:8px">Groups mine much faster than solos and share one pool. Touching a member's pad banks the whole pool to that member. Leaving must be held for 2 s, splits the pool 3:1 toward your declared colour minus a 15% forfeit, and locks you out of joining for a while. Hard bumps spill carried units and stun both bodies. The arena shrinks. At the time limit the leader wins. <kbd>space</kbd> play, <kbd>←</kbd> <kbd>→</kbd> step.</p>
+    </div>
+    <div class="card" id="alliances-card">
+      <h2>Alliances</h2>
+      <div class="alli" id="alliances"></div>
     </div>
     <div class="card feed">
       <h2>Events</h2>
@@ -224,6 +234,12 @@
   // ---------------------------------------------------------------- events
   const allEvents = [];
   frames.forEach((f, fi) => f.events.forEach(e => allEvents.push(Object.assign({ fi }, e))));
+  // Leave requests that were cancelled within 1.5 s are noise; drop them and all cancel events.
+  (function pruneLeaveNoise() {
+    const cancels = allEvents.filter(e => e.kind === 'leave_cancel');
+    for (const e of allEvents) if (e.kind === 'leave_start' && cancels.some(c => c.player === e.player && c.t > e.t && c.t - e.t < 1.5)) e.kind = 'leave_noise';
+    for (const e of allEvents) if (e.kind === 'leave_cancel') e.kind = 'leave_noise';
+  })();
   function describe(e) {
     const nm = i => R.names[i];
     switch (e.kind) {
@@ -238,6 +254,46 @@
       case 'timeout': return { tag: 'win', text: e.player !== undefined ? `Time limit: ${nm(e.player)} leads and wins` : 'Time limit reached', big: true };
     }
     return null;
+  }
+
+  // ---------------------------------------------------------------- alliances
+  // A spell = a maximal period in which a set of players share one body. Built from merge/leave/bank events.
+  const spells = [];
+  (function buildSpells() {
+    let groups = {};  // key -> spell index of the live group with that member set
+    const bykey = m => m.slice().sort((a, b) => a - b).join(',');
+    for (const e of allEvents) {
+      if (e.kind === 'merge') {
+        const members = e.a.concat(e.b);
+        for (const side of [e.a, e.b]) { const k = bykey(side); if (groups[k] !== undefined) { spells[groups[k]].end = e.t; spells[groups[k]].ended = 'grew'; delete groups[k]; } }
+        spells.push({ members, start: e.t, end: null, ended: null, banks: [], taken: null, leaver: null });
+        groups[bykey(members)] = spells.length - 1;
+      } else if (e.kind === 'leave') {
+        for (const k in groups) { const sp = spells[groups[k]]; if (sp.members.includes(e.player)) {
+          sp.end = e.t; sp.ended = 'left'; sp.leaver = e.player; sp.taken = e.share.reduce((a, b) => a + b, 0); delete groups[k];
+          const rest = sp.members.filter(p => p !== e.player);
+          if (rest.length > 1) { spells.push({ members: rest, start: e.t, end: null, ended: null, banks: [], taken: null, leaver: null }); groups[bykey(rest)] = spells.length - 1; }
+        } }
+      } else if (e.kind === 'bank' && e.group.length > 1) {
+        const k = bykey(e.group); if (groups[k] !== undefined) spells[groups[k]].banks.push({ to: e.player, amount: e.amount.reduce((a, b) => a + b, 0), t: e.t });
+      }
+    }
+  })();
+  const alliEl = document.getElementById('alliances');
+  let alliStamp = -1;
+  function updateAlliances(t) {
+    const stamp = Math.floor(t);
+    if (stamp === alliStamp) return;
+    alliStamp = stamp;
+    const shown = spells.filter(sp => sp.start <= t && (sp.end === null || sp.end - sp.start >= 3)).map(sp => ({ ...sp, live: sp.end === null || sp.end > t, dur: (sp.end === null || sp.end > t ? t : sp.end) - sp.start }))
+      .sort((a, b) => (b.live - a.live) || (b.dur - a.dur)).slice(0, 8);
+    alliEl.innerHTML = shown.map(sp => {
+      const who = sp.members.map(i => `<i style="background:${pcolor(i)}"></i>`).join('') + ' ' + sp.members.map(i => R.names[i].replace('Agent ', 'A')).join(' + ');
+      const banked = sp.banks.filter(b => b.t <= t).reduce((a, b) => a + b.amount, 0);
+      let end = sp.live ? 'live' : sp.ended === 'left' ? `${R.names[sp.leaver].replace('Agent ', 'A')} left with ${sp.taken.toFixed(0)}` : 'grew';
+      if (banked > 0) end = `banked ${banked.toFixed(0)} · ` + end;
+      return `<div class="row${sp.live ? ' live' : ''}"><span class="t">${sp.start.toFixed(0)}s +${sp.dur.toFixed(0)}s</span><span class="who">${who}</span><span class="end">${end}</span></div>`;
+    }).join('') || '<div class="row"><span class="t"></span><span>no alliances yet</span></div>';
   }
 
   // ---------------------------------------------------------------- state
@@ -475,6 +531,7 @@
 
     updateCards(fr);
     updateFeed(fi);
+    updateAlliances(time);
     scrub.value = Math.round(time / T * 1000);
     timeEl.textContent = `${time.toFixed(1)} / ${T.toFixed(0)} s`;
   }
