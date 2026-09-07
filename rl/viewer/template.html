@@ -194,7 +194,7 @@
         <span>pulsing slice = leaving</span>
         <span>edge disc = home pad</span>
       </div>
-      <p class="rules" style="margin-top:8px">Groups mine faster than solos and share one pool. Touching a member's pad banks the whole pool to them. Leaving takes 2 s and splits the pool. Hard bumps spill carried units. The arena shrinks. <kbd>space</kbd> play, <kbd>←</kbd> <kbd>→</kbd> step.</p>
+      <p class="rules" style="margin-top:8px">Groups mine much faster than solos and share one pool. Touching a member's pad banks the whole pool to that member. Leaving must be held for 2 s, splits the pool 3:1 toward your declared colour minus a 25% forfeit, and locks you out of joining for a while. Hard bumps spill carried units and stun both bodies. The arena shrinks. At the time limit the leader wins. <kbd>space</kbd> play, <kbd>←</kbd> <kbd>→</kbd> step.</p>
     </div>
     <div class="card feed">
       <h2>Events</h2>
@@ -214,7 +214,7 @@
   const RESN = ['A', 'B', 'C', 'D'];
   const PC = ['#6ef0c5', '#b28dff', '#4fd1ff', '#ff7bd5', '#f5f5f5', '#9cff57', '#ff6b6b', '#c8b6ff'];
   const pcolor = i => PC[i % PC.length];
-  const dt = cfg.dt;
+  const dt = cfg.dt * ((R.meta && R.meta.frame_every) || 1);
   const T = frames[frames.length - 1].t;
 
   document.getElementById('meta').textContent =
@@ -228,13 +228,14 @@
     const nm = i => R.names[i];
     switch (e.kind) {
       case 'merge': return { tag: 'merge', text: `${e.a.map(nm).join(' + ')} joined ${e.b.map(nm).join(' + ')} (group of ${e.size})` };
-      case 'leave_start': return { tag: 'leave', text: `${nm(e.player)} is leaving` };
+      case 'leave_start': return { tag: 'leave', text: `${nm(e.player)} starts leaving` };
+      case 'leave_cancel': return { tag: 'leave', text: `${nm(e.player)} stays after all` };
       case 'leave': return { tag: 'leave', text: `${nm(e.player)} left with ${e.share.reduce((a, b) => a + b, 0).toFixed(1)} units` };
       case 'bank': return { tag: 'bank', text: `${nm(e.player)} banked ${e.amount.reduce((a, b) => a + b, 0).toFixed(1)}` + (e.group.length > 1 ? ` (group of ${e.group.length})` : '') };
       case 'spill': return { tag: 'spill', text: `${e.a.map(nm).join('+')} hit ${e.b.map(nm).join('+')}: ${e.units} units spilled` };
       case 'mine_dead': return { tag: 'mine', text: `Mine ${e.mine} (${RESN[R.mine_type[e.mine]]}) swallowed by the edge` };
       case 'win': return { tag: 'win', text: `${nm(e.player)} wins`, big: true };
-      case 'timeout': return { tag: 'win', text: 'Time limit reached', big: true };
+      case 'timeout': return { tag: 'win', text: e.player !== undefined ? `Time limit: ${nm(e.player)} leads and wins` : 'Time limit reached', big: true };
     }
     return null;
   }
@@ -310,6 +311,7 @@
       }
       let st = b && b.m.length > 1 ? `group ${b.m.length}` : 'solo';
       if (p.leaving >= 0) st += ' · leaving';
+      else if (p.cd > 0) st += ' · cooldown';
       else if (p.join) st += ' · open';
       if (b && b.pool.reduce((a, x) => a + x, 0) > 0.5) st += ` · carry ${b.pool.reduce((a, x) => a + x, 0).toFixed(0)}`;
       c.state.textContent = st;
@@ -412,6 +414,11 @@
       });
       ctx.strokeStyle = '#101018'; ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.stroke();
+      if (b.stun > 0) {
+        ctx.strokeStyle = '#f39c9c'; ctx.lineWidth = 3; ctx.globalAlpha = 0.8;
+        ctx.beginPath(); ctx.arc(px, py, r + 5, 0, Math.PI * 2 * Math.min(1, b.stun / (cfg.stun_time || 1))); ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
       if (anyJoin) {
         ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.setLineDash([3, 3]);
         ctx.beginPath(); ctx.arc(px, py, r + 3, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
