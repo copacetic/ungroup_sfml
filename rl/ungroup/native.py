@@ -57,6 +57,8 @@ class Config:
     intent_weight: float = 3.0
     stun_time: float = 1.0
     leave_hold: float = 1.0
+    group_bank_bonus: float = 0.15
+    rammer_stun_mult: float = 2.5
     carried_shaping: float = 2.0
     win_bonus: float = 10.0
     lose_penalty: float = 2.0

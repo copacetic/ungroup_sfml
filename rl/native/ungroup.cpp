@@ -41,7 +41,8 @@
 namespace {
 
 constexpr int TYPES = 4;
-constexpr int MAX_SLOTS = 8;      // other-player slots in the observation (count-invariant)
+constexpr int MAX_SLOTS = 8;      // other-player slots in the observation (nearest others)
+constexpr int MAX_PLAYERS = 32;   // hard cap on seats (pairwise history arrays)
 constexpr int N_PICKUPS_OBS = 4;
 constexpr int N_DR = 4;           // randomised constants exposed in the observation
 constexpr double PI = 3.14159265358979323846;
@@ -61,10 +62,12 @@ struct Cfg {
     int max_group = 6;
     double join_cooldown = 3.0, partner_cooldown = 10.0, leave_forfeit = 0.15, intent_weight = 3.0, stun_time = 1.0;
     double leave_hold = 1.0;  // seconds a leave request stays active after the last leave=1 decision
+    double group_bank_bonus = 0.15;  // banked amount x (1 + bonus * (n - 1)) when a group banks
+    double rammer_stun_mult = 2.5;   // the faster body in a spill is stunned this many times longer
     // reward
     double carried_shaping = 2.0, win_bonus = 10.0, lose_penalty = 2.0, relative_reward = 0.5;
 };
-constexpr int CFG_LEN = 35;
+constexpr int CFG_LEN = 37;
 
 void cfg_fill(Cfg& c, const double* a, int len) {
     if (len < CFG_LEN) return;
@@ -77,7 +80,7 @@ void cfg_fill(Cfg& c, const double* a, int len) {
     c.pickup_ttl = a[k++]; c.max_pickups = (int)a[k++]; c.shrink_start = a[k++]; c.final_radius = a[k++];
     c.restitution = a[k++]; c.max_group = (int)a[k++];
     c.join_cooldown = a[k++]; c.partner_cooldown = a[k++]; c.leave_forfeit = a[k++]; c.intent_weight = a[k++];
-    c.stun_time = a[k++]; c.leave_hold = a[k++];
+    c.stun_time = a[k++]; c.leave_hold = a[k++]; c.group_bank_bonus = a[k++]; c.rammer_stun_mult = a[k++];
     c.carried_shaping = a[k++]; c.win_bonus = a[k++]; c.lose_penalty = a[k++]; c.relative_reward = a[k++];
 }
 
@@ -91,7 +94,7 @@ void cfg_dump(const Cfg& c, double* a) {
     a[k++] = c.pickup_ttl; a[k++] = c.max_pickups; a[k++] = c.shrink_start; a[k++] = c.final_radius;
     a[k++] = c.restitution; a[k++] = c.max_group;
     a[k++] = c.join_cooldown; a[k++] = c.partner_cooldown; a[k++] = c.leave_forfeit; a[k++] = c.intent_weight;
-    a[k++] = c.stun_time; a[k++] = c.leave_hold;
+    a[k++] = c.stun_time; a[k++] = c.leave_hold; a[k++] = c.group_bank_bonus; a[k++] = c.rammer_stun_mult;
     a[k++] = c.carried_shaping; a[k++] = c.win_bonus; a[k++] = c.lose_penalty; a[k++] = c.relative_reward;
 }
 
@@ -176,13 +179,13 @@ struct Game {
     std::vector<int> seats;
     Stats stats;
     // pairwise history (indexed [i][j] with MAX_SLOTS stride)
-    double comember_time[MAX_SLOTS][MAX_SLOTS];
-    double took_from[MAX_SLOTS][MAX_SLOTS];        // units j took when leaving a body containing i
-    double banked_while[MAX_SLOTS][MAX_SLOTS];     // units banked to j while i was a member
-    double last_left_me[MAX_SLOTS][MAX_SLOTS];     // t at which j last left a body containing i (-1 never)
-    double partner_cd[MAX_SLOTS][MAX_SLOTS];       // t until which i may not merge with j
-    double pair_since[MAX_SLOTS][MAX_SLOTS];       // start time of the current co-membership (-1 none)
-    double pair_ended[MAX_SLOTS][MAX_SLOTS];       // end time of the last co-membership (-1 none)
+    double comember_time[MAX_PLAYERS][MAX_PLAYERS];
+    double took_from[MAX_PLAYERS][MAX_PLAYERS];        // units j took when leaving a body containing i
+    double banked_while[MAX_PLAYERS][MAX_PLAYERS];     // units banked to j while i was a member
+    double last_left_me[MAX_PLAYERS][MAX_PLAYERS];     // t at which j last left a body containing i (-1 never)
+    double partner_cd[MAX_PLAYERS][MAX_PLAYERS];       // t until which i may not merge with j
+    double pair_since[MAX_PLAYERS][MAX_PLAYERS];       // start time of the current co-membership (-1 none)
+    double pair_ended[MAX_PLAYERS][MAX_PLAYERS];       // end time of the last co-membership (-1 none)
 
     double uniform(double a, double b) { return std::uniform_real_distribution<double>(a, b)(rng); }
     double radius(int n) const { return cfg.solo_radius * std::sqrt((double)n); }
@@ -272,8 +275,8 @@ struct Game {
             bodies.push_back(b);
         }
         picks.clear();
-        for (int i = 0; i < MAX_SLOTS; i++)
-            for (int j = 0; j < MAX_SLOTS; j++) {
+        for (int i = 0; i < MAX_PLAYERS; i++)
+            for (int j = 0; j < MAX_PLAYERS; j++) {
                 comember_time[i][j] = 0; took_from[i][j] = 0; banked_while[i][j] = 0;
                 last_left_me[i][j] = -1; partner_cd[i][j] = -1; pair_since[i][j] = -1; pair_ended[i][j] = -1;
             }
@@ -504,8 +507,10 @@ struct Game {
                                                       std::nearbyint(cfg.spill_k * (rel - cfg.spill_min_speed) + 1));
                             int sa = spill(a, units, contact);
                             int sb = spill(b, units, contact);
-                            a.stun = std::max(a.stun, cfg.stun_time);
-                            b.stun = std::max(b.stun, cfg.stun_time);
+                            // The faster body along the normal is the aggressor and is dazed longer.
+                            bool a_faster = a.vel.dot(nrm) > -b.vel.dot(nrm);
+                            a.stun = std::max(a.stun, cfg.stun_time * (a_faster ? cfg.rammer_stun_mult : 1.0));
+                            b.stun = std::max(b.stun, cfg.stun_time * (a_faster ? 1.0 : cfg.rammer_stun_mult));
                             stats.spills++;
                             char buf[96];
                             snprintf(buf, sizeof buf, ",\"units\":%d,\"speed\":%.2f,\"x\":%.3f,\"y\":%.3f", sa + sb, rel, contact.x, contact.y);
@@ -603,7 +608,8 @@ struct Game {
                 if ((b.pos - pad).norm() < r + cfg.pad_radius) {
                     double amount[TYPES];
                     double total = b.pool_total();
-                    for (int t = 0; t < TYPES; t++) { amount[t] = b.pool[t]; players[i].banked[t] += b.pool[t]; b.pool[t] = 0; }
+                    double mult = 1.0 + cfg.group_bank_bonus * (b.n() - 1);
+                    for (int t = 0; t < TYPES; t++) { amount[t] = b.pool[t] * mult; players[i].banked[t] += amount[t]; b.pool[t] = 0; }
                     players[i].last_bank_t = t;
                     for (int j : b.members) if (j != i) banked_while[j][i] += total;
                     stats.banks++;
@@ -1071,6 +1077,7 @@ void* ugb_create(int n_envs, const double* cfg, int cfg_len, unsigned long long 
         Game& g = b->games[e];
         cfg_fill(g.base_cfg, cfg, cfg_len);
         g.lo = g.hi = g.base_cfg;
+        if (g.base_cfg.n_players > MAX_PLAYERS) g.base_cfg.n_players = MAX_PLAYERS;
         g.seats.assign(g.base_cfg.n_players, SEAT_EXTERNAL);
         g.reset(b->next_seed++);
     }
