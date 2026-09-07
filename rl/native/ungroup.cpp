@@ -507,14 +507,17 @@ struct Game {
                                                       std::nearbyint(cfg.spill_k * (rel - cfg.spill_min_speed) + 1));
                             int sa = spill(a, units, contact);
                             int sb = spill(b, units, contact);
-                            // The faster body along the normal is the aggressor and is dazed longer.
-                            bool a_faster = a.vel.dot(nrm) > -b.vel.dot(nrm);
-                            a.stun = std::max(a.stun, cfg.stun_time * (a_faster ? cfg.rammer_stun_mult : 1.0));
-                            b.stun = std::max(b.stun, cfg.stun_time * (a_faster ? 1.0 : cfg.rammer_stun_mult));
-                            stats.spills++;
-                            char buf[96];
-                            snprintf(buf, sizeof buf, ",\"units\":%d,\"speed\":%.2f,\"x\":%.3f,\"y\":%.3f", sa + sb, rel, contact.x, contact.y);
-                            event("\"kind\":\"spill\",\"a\":" + ids(a.members) + ",\"b\":" + ids(b.members) + buf);
+                            // A hard bump between empty-handed bodies is just a bounce: no stun, no event.
+                            if (sa + sb > 0) {
+                                // The faster body along the normal is the aggressor and is dazed longer.
+                                bool a_faster = a.vel.dot(nrm) > -b.vel.dot(nrm);
+                                a.stun = std::max(a.stun, cfg.stun_time * (a_faster ? cfg.rammer_stun_mult : 1.0));
+                                b.stun = std::max(b.stun, cfg.stun_time * (a_faster ? 1.0 : cfg.rammer_stun_mult));
+                                stats.spills++;
+                                char buf[96];
+                                snprintf(buf, sizeof buf, ",\"units\":%d,\"speed\":%.2f,\"x\":%.3f,\"y\":%.3f", sa + sb, rel, contact.x, contact.y);
+                                event("\"kind\":\"spill\",\"a\":" + ids(a.members) + ",\"b\":" + ids(b.members) + buf);
+                            }
                         }
                     }
                 }
