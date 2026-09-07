@@ -297,7 +297,7 @@
   }
 
   // ---------------------------------------------------------------- state
-  let time = 0, playing = false, speed = 1, last = null;
+  let time = Math.min(T, Math.max(0, parseFloat(new URLSearchParams(location.search).get('t')) || 0)), playing = false, speed = 1, last = null;
   const canvas = document.getElementById('c');
   const ctx = canvas.getContext('2d');
   const feedEl = document.getElementById('feed');
