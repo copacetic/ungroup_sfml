@@ -158,6 +158,19 @@ ordering is unchanged, and the same v3 snapshot re-evaluated under the fix went 
 the bail bot with real spills in self-play at 14 per round. Run `rl/checkpoints/v4` retrains from scratch
 under the fixed rules.
 
+**v4 (retrained under the fixed rules) and what the health checker showed.** `rl/health.py` evaluated every
+v4 snapshot as it appeared (`rl/models/v4_health.csv`). Update 200 is the best snapshot: 32 paired rounds give
+self-play progress 0.61 (v3: 0.53) with alliances of 9.9 s and 17 over ten seconds per round, 0.61 vs 0.64
+against bail, 0.58 vs 0.62 against solo, 0.64 vs 0.71 against loyal, 0.56 vs 0.25 against the kidnapper,
+0.50 vs 0.37 against the rammer, and the top progress in the mixed lobby. From update 250 the checker flagged
+the same drift as v3: self-play progress fell to 0.54, alliances to 6 s, spills rose, and the bot margins
+went from within noise to minus 0.08. The drift is therefore not the collision tax; it is something in the
+self-play objective. The v5 run tests the two candidates together, the relative-reward term (which pays for
+other agents' failure and so rewards mutual harassment) and the carried-unit shaping (which pays for
+picking spilled units off the floor before they are banked).
+
+The published replays use `rl/models/v4_200.pt`.
+
 ## 6. The v2 training stack
 
 `rl/train_v2.py` implements the architecture-review recommendations: entity encoder with masked pooling,
