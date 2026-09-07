@@ -2,6 +2,8 @@
 
 *Written September 2026 against commit `d870d29` (last upstream change January 2021). Everything below was checked by reading the full source (about 8,000 lines of C++), building it on a current toolchain, running the unit tests, running bot-vs-bot games over the real network stack, and running bot-vs-bot games in a new offline simulator (`ug-sim`, added alongside this document).*
 
+> **Addendum, 7 September 2026.** The roadmap in section 7 has been superseded. After the first RL run, three adversarial reviews found that the reported alliance behavior was a rule exploit, that the SFML engine should be frozen rather than extended, and that the C++ core under `rl/native` should be the only rules implementation. The rules were revised (held leave with cooldowns, spill stun, intent lock, timeout tiebreak, 30 Hz physics), the trainer was rebuilt, and the roadmap now starts with humans playing the new rules. See [PLAN_REVIEW_2026-09.md](PLAN_REVIEW_2026-09.md) for the findings, their verification status, the ladder results under the new rules, and the revised plan.
+
 ## 1. What the game is trying to be
 
 Ungroup is a real-time, top-down multiplayer game about **temporary alliances**. Each player is a circle with a private shopping list of four resource types. Resources are mined by bumping into mines. Players can merge circles into a group that moves and mines as one body, and can leave a group at any moment. The intended tension is:
