@@ -82,9 +82,15 @@ truth). The v2 tools:
 | `python3 rl/play_v2.py eval --checkpoint rl/checkpoints/v2/latest.pt` | Paired-seed evaluation against training and held-out bots |
 | `python3 rl/play_v2.py sweep --checkpoint ...` | Margin over the ladder under rule-constant perturbations (memorisation check) |
 | `python3 rl/play_v2.py record --checkpoint ... --tries 6 --out replay.json` | Record a replay with the action log; build the page with `viewer/build_viewer.py` |
+| `python3 rl/play_v2.py record --checkpoint ... --seats $(python3 -c "print(','.join(['policy']*20))") --tries 3 --out replay20.json` | Record a 20-agent round (about 8 MB of JSON; the viewer handles up to 32 seats) |
 | `python3 rl/play_server.py --humans 2 --agents 2 --checkpoint ... --bots bail,loyal` | Play in a browser: serves `viewer/play.html`, one room, rounds restart, replays saved |
 
 Scripted bots: `solo` (never groups), `bail` (groups, leaves when its share is worth taking or a partner's
 pad is near), `loyal` (never leaves, banks at the pad of the member furthest behind), and two held-out
 bots never used in training: `kidnap` (drags laden groups to its own pad) and `rammer` (spills laden
 bodies and collects the floor).
+
+Models in `rl/models/`: `v2_candidate.pt` and `v2_strong.pt` were trained under the v2 rules; `v3_*.pt`
+were trained after the 7 September changes (rammer stunned longer than its victim, group bank bonus).
+Checkpoints carry their own config, so evaluating an old model runs it under the current core's rules
+with the old model's constants.

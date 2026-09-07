@@ -114,6 +114,39 @@ deviation, and neither collapses into the other. Instant re-merges are now zero 
 alliances last 13 to 150 seconds depending on the bot. Whether this is fun is a question for humans;
 the numbers only say it is no longer degenerate.
 
+## 5b. The v3 rule changes (7 September): the rammer pays, the group is paid
+
+The first trained v2 agents used alliances, but the strongest snapshot drifted toward five-second
+alliances and 54 spills per round: crashing into a laden group cost the rammer nothing and paid it
+half the floor. Two changes, both in `rl/native/ungroup.cpp`:
+
+- In a spill the faster body along the collision normal is stunned 2.5 times longer than its victim
+  (`rammer_stun_mult`), so the victim reaches the floor first.
+- Banking as a group multiplies the pool by 1 + 0.15 (n - 1) (`group_bank_bonus`), so a pair that banks
+  together beats a solo of the same yield even after the leaver's forfeit.
+
+The ladder ordering survived (32 paired rounds, six seats): six loyal 0.72 with half the rounds finishing
+early, six bail 0.63, six solo 0.63, three bail among three loyal 0.55 vs 0.48, two rammers among bail
+and loyal 0.44 and never a win. The dilemma shape is unchanged; the rammer went from viable freeloader
+to loser.
+
+Agents retrained from scratch under the v3 rules (run `rl/checkpoints/v3`, snapshot at update 350,
+8.8 M samples) against the previous strongest v2 snapshot evaluated under the same v3 rules:
+
+| Lineup (32 paired rounds) | v3 agent | v2 agent under v3 rules |
+| --- | --- | --- |
+| three agents, three loyal: alliance mean duration, spills | 34 s, 10.5 | 19 s, 15.8 |
+| three agents, three kidnappers: agent vs kidnapper progress | 0.48 vs 0.19 | 0.53 vs 0.16 |
+| three agents, three rammers: agent vs rammer progress | 0.48 vs 0.35 | 0.49 vs 0.30 |
+| six agents: alliances, mean duration, over 10 s, spills | 39, 12.9 s, 17.6, 23 | (v2 rules) 45, 5 s, 15, 54 |
+
+Alliances roughly doubled in length and spills halved at similar strength against the held-out bots.
+Against the training bots the v3 snapshot is weaker than the v2 candidate was (0.54 vs 0.62 against
+bail, 0.51 vs 0.60 against solo); it is an earlier snapshot of a run that was still improving when this
+was written, and the win-rate columns of the training log were rising through update 400. Twenty-agent
+self-play under v3: 137 merges, 144 spills and 192 banks in a round, against 253, 220 and 114 for the v2
+snapshot, so large lobbies also shifted from demolition derby toward mining and banking.
+
 ## 6. The v2 training stack
 
 `rl/train_v2.py` implements the architecture-review recommendations: entity encoder with masked pooling,
