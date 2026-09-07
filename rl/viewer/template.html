@@ -222,7 +222,7 @@
   const N = R.names.length;
   const RES = ['#9fe0f6', '#f3e59a', '#f3b59b', '#f39c9c'];
   const RESN = ['A', 'B', 'C', 'D'];
-  const PC = ['#6ef0c5', '#b28dff', '#4fd1ff', '#ff7bd5', '#f5f5f5', '#9cff57', '#ff6b6b', '#c8b6ff'];
+  const PC = ['#6ef0c5', '#b28dff', '#4fd1ff', '#ff7bd5', '#f5f5f5', '#9cff57', '#ff6b6b', '#c8b6ff', '#ffd166', '#06d6a0', '#ef476f', '#118ab2', '#f78c6b', '#a8dadc', '#e0aaff', '#80ed99', '#ffb4a2', '#90e0ef', '#c9184a', '#b5e48c', '#fdffb6', '#9bf6ff', '#ffc6ff', '#bdb2ff'];
   const pcolor = i => PC[i % PC.length];
   const dt = cfg.dt * ((R.meta && R.meta.frame_every) || 1);
   const T = frames[frames.length - 1].t;
@@ -248,7 +248,7 @@
       case 'leave_cancel': return { tag: 'leave', text: `${nm(e.player)} stays after all` };
       case 'leave': return { tag: 'leave', text: `${nm(e.player)} left with ${e.share.reduce((a, b) => a + b, 0).toFixed(1)} units` };
       case 'bank': return { tag: 'bank', text: `${nm(e.player)} banked ${e.amount.reduce((a, b) => a + b, 0).toFixed(1)}` + (e.group.length > 1 ? ` (group of ${e.group.length})` : '') };
-      case 'spill': return { tag: 'spill', text: `${e.a.map(nm).join('+')} hit ${e.b.map(nm).join('+')}: ${e.units} units spilled` };
+      case 'spill': if (!e.units) return null; return { tag: 'spill', text: `${e.a.map(nm).join('+')} hit ${e.b.map(nm).join('+')}: ${e.units} units spilled` };
       case 'mine_dead': return { tag: 'mine', text: `Mine ${e.mine} (${RESN[R.mine_type[e.mine]]}) swallowed by the edge` };
       case 'win': return { tag: 'win', text: `${nm(e.player)} wins`, big: true };
       case 'timeout': return { tag: 'win', text: e.player !== undefined ? `Time limit: ${nm(e.player)} leads and wins` : 'Time limit reached', big: true };
