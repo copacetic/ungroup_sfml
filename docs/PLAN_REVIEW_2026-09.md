@@ -195,6 +195,12 @@ to five seconds. The mid-drift v4 snapshot at update 200 remains the most watcha
 alliances, seventeen over ten seconds per round) at similar strength. The next lever on strength is more
 samples per update and a longer horizon on the movement advantage, not more rule changes.
 
+Full evaluation of the v8 update-300 snapshot (`rl/models/v8_300.pt`, 32 paired rounds per lineup): self-play
+0.64, the best of any run; 0.62 vs 0.65 against bail; 0.62 vs 0.61 against solo, the first snapshot at or
+above the solo bot; 0.65 vs 0.76 against loyal; 0.57 vs 0.20 against the kidnapper; 0.52 vs 0.44 against the
+rammer. Its self-play alliances last 4 s with two per round over ten seconds, so it is the strongest agent and
+the least interesting to watch; the replays keep the v4 update-200 agent.
+
 ## 6. The v2 training stack
 
 `rl/train_v2.py` implements the architecture-review recommendations: entity encoder with masked pooling,
