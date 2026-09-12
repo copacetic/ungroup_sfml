@@ -1,0 +1,13 @@
+base    6solo   early=0.00 len=240 grp=1.00 merges=0.0 leaves=0.0 banks=18.3 gbanks=0.0 all=0.0 dur=0s | solo 0.632±0.011 w0.17
+base    6bail   early=0.08 len=239 grp=1.34 merges=14.0 leaves=12.2 banks=45.4 gbanks=10.4 all=17.1 dur=16s | bail 0.621±0.016 w0.17
+base    6loyal  early=0.50 len=218 grp=3.11 merges=4.7 leaves=0.0 banks=115.0 gbanks=115.0 all=12.4 dur=126s | loyal 0.729±0.020 w0.17
+base    3b3l    early=0.08 len=236 grp=1.90 merges=6.8 leaves=4.1 banks=80.5 gbanks=68.8 all=10.2 dur=73s | bail 0.566±0.022 w0.18 loyal 0.494±0.040 w0.15
+base    4b2l    early=0.12 len=237 grp=1.69 merges=7.5 leaves=5.1 banks=66.1 gbanks=49.4 all=9.9 dur=63s | bail 0.558±0.019 w0.22 loyal 0.251±0.068 w0.06
+base    5b1l    early=0.04 len=239 grp=1.52 merges=9.5 leaves=7.5 banks=59.6 gbanks=35.7 all=11.8 dur=36s | bail 0.568±0.014 w0.20 loyal 0.018±0.013 w0.00
+base    1b5l    early=0.50 len=227 grp=2.75 merges=6.5 leaves=2.7 banks=128.7 gbanks=124.2 all=15.7 dur=90s | bail 0.625±0.040 w0.17 loyal 0.708±0.020 w0.17
+base    1s5l    early=0.50 len=220 grp=2.65 merges=3.8 leaves=0.0 banks=105.3 gbanks=102.5 all=9.0 dur=127s | solo 0.530±0.030 w0.08 loyal 0.722±0.016 w0.18
+base    4s2l    early=0.79 len=228 grp=1.29 merges=1.0 leaves=0.0 banks=22.8 gbanks=11.0 all=1.0 dur=195s | solo 0.586±0.018 w0.04 loyal 0.866±0.017 w0.42
+base    2b2l2k  early=0.08 len=236 grp=1.95 merges=5.8 leaves=2.9 banks=79.7 gbanks=71.5 all=8.2 dur=94s | bail 0.562±0.032 w0.40 loyal 0.288±0.066 w0.04 kidnap 0.236±0.034 w0.06
+base    2b2l2r  early=0.04 len=240 grp=1.48 merges=6.7 leaves=5.0 banks=68.1 gbanks=50.5 all=9.5 dur=46s | bail 0.657±0.024 w0.25 loyal 0.648±0.034 w0.25 rammer 0.431±0.016 w0.00
+base    3b3s    early=0.00 len=240 grp=1.08 merges=4.9 leaves=4.3 banks=29.1 gbanks=1.8 all=5.1 dur=13s | bail 0.627±0.015 w0.15 solo 0.644±0.016 w0.18
+base    2l4b_   early=0.08 len=239 grp=1.67 merges=7.5 leaves=5.4 banks=66.4 gbanks=48.4 all=10.0 dur=64s | loyal 0.351±0.073 w0.10 bail 0.581±0.027 w0.20

@@ -1,0 +1,12 @@
+F            6solo                early 0.00 len   240 grp 1.00 merges   0.0 leaves   0.0 spills  4.1 banks  18.2 | solo 0.629+-0.010
+F            6bail                early 0.00 len   240 grp 1.35 merges  14.9 leaves  13.2 spills  1.8 banks  38.9 | bail 0.625+-0.015
+F            6loyal               early 0.38 len   213 grp 3.37 merges   5.0 leaves   0.0 spills  0.0 banks  28.7 | loyal 0.722+-0.019
+F            3bail3loyal          early 0.17 len   236 grp 1.92 merges   8.0 leaves   5.4 spills  0.8 banks  35.9 | bail 0.590+-0.022 loyal 0.561+-0.034
+F            3bail3solo           early 0.00 len   240 grp 1.08 merges   4.7 leaves   4.1 spills  2.9 banks  29.0 | bail 0.610+-0.018 solo 0.647+-0.016
+F            2loyal4solo          early 0.67 len   231 grp 1.30 merges   1.0 leaves   0.0 spills  2.0 banks  22.2 | loyal 0.864+-0.013 solo 0.617+-0.018
+F            1solo                early 0.00 len   240 grp 1.00 merges   0.0 leaves   0.0 spills  0.0 banks   3.2 | solo 0.669+-0.029
+F            2loyal               early 0.21 len   238 grp 1.52 merges   1.0 leaves   0.0 spills  0.0 banks  17.9 | loyal 0.769+-0.029
+F            2bail2loyal2kidnap   early 0.17 len   234 grp 1.94 merges   5.9 leaves   3.1 spills  0.2 banks  32.8 | bail 0.550+-0.030 loyal 0.302+-0.066 kidnap 0.227+-0.034
+F            2bail2loyal2rammer   early 0.12 len   238 grp 1.48 merges   6.7 leaves   5.2 spills 18.8 banks  30.3 | bail 0.675+-0.022 loyal 0.722+-0.025 rammer 0.438+-0.018
+F            1loyal5bail          early 0.04 len   240 grp 1.51 merges  11.4 leaves   9.4 spills  1.6 banks  39.9 | loyal 0.051+-0.020 bail 0.573+-0.019
+F            1bail5loyal          early 0.54 len   220 grp 2.74 merges   6.8 leaves   2.7 spills  0.1 banks  33.6 | bail 0.705+-0.038 loyal 0.729+-0.019

@@ -1,0 +1,48 @@
+--- D12 12equal
+   games: 12
+   length: 238.33333333333337
+   dormant_frac: 0.04421970514203524
+   bloom_count: 5.587001262626262
+   mean_stock_0_120: 0.8289178433964014
+   mean_stock_120_192: 0.6205013020833333
+   mean_stock_192_240: 0.3546204794755161
+   depletions_per_round: 20.083333333333332
+   first_depletion: 149.95
+   recovery_to_half_K_s: (43.0, 58.9)
+   n_recov: 8
+   successive_depletions_on_ring_neighbour: (0.1319796954314721, 197)
+   chance_neighbour: 0.2857142857142857
+   stock_period_s: (96.80000000000001, 0.050326080735646324, 89)
+   stock_sd_over_K: 0.2620618508938856
+   nbr_lag_peak: (0.0, 0.17588874683245415)
+   nbr_lag_asym: 0.0030092478352857425
+   mine_switches_per_player: 12.479166666666666
+   inner_max_over_K_autumn: 1.0305555555555554
+   inner_stock_over_K_at_192: 0.6657986111111112
+   outer_stock_over_K_at_150: 0.4605902777777778
+   progress: 0.5932256579511822
+   banks: 81.08333333333333
+--- D12 12loyal
+   games: 12
+   length: 223.20000000000002
+   dormant_frac: 0.13377220295675957
+   bloom_count: 4.437152703140291
+   mean_stock_0_120: 0.6764952583008719
+   mean_stock_120_192: 0.46932655324861433
+   mean_stock_192_240: 0.2145047579350722
+   depletions_per_round: 31.5
+   first_depletion: 45.03333333333334
+   recovery_to_half_K_s: (23.80000000000001, 49.12000000000001)
+   n_recov: 137
+   successive_depletions_on_ring_neighbour: (0.2601880877742947, 319)
+   chance_neighbour: 0.2857142857142857
+   stock_period_s: (70.4, 0.043351993447352154, 96)
+   stock_sd_over_K: 0.30540846101300206
+   nbr_lag_peak: (2.0, 0.24145630183752076)
+   nbr_lag_asym: 0.014931734144926143
+   mine_switches_per_player: 23.277777777777775
+   inner_max_over_K_autumn: 1.009722222222222
+   inner_stock_over_K_at_192: 0.48875
+   outer_stock_over_K_at_150: 0.3897569444444445
+   progress: 0.6932443487997461
+   banks: 62.083333333333336
