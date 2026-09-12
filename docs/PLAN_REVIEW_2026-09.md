@@ -171,6 +171,30 @@ picking spilled units off the floor before they are banked).
 
 The published replays use `rl/models/v4_200.pt`.
 
+**Finding the drift (runs v5 to v8).** Every run degraded after about 200 updates, and the health checker
+made the ablations cheap enough to run one after another from the same warm start:
+
+| Run | Change | Result |
+| --- | --- | --- |
+| v5 | no relative reward, carried shaping halved | drifted earlier (self-play 0.65 to 0.58 by update 150) |
+| v6 | two thirds bot opponents, no league snapshots | drifted harder (loses to bail by 0.20 at update 300) |
+| v7 | no entropy bonus on the movement head | drifted the same; movement entropy still rose 0.58 to 0.78 |
+| v8 | KL anchor of the movement head to the warm-start policy (`--anchor-kl 0.3`) | no drift through update 600 |
+
+The decisive measurement was the episode return: the late v6 snapshot earned less reward than the early one
+in the same lineup, so the policy was getting worse on its own objective. Rules, reward terms and opponent mix
+were all ruled out. The common thread was the movement head's entropy rising in every run with or without an
+entropy bonus: PPO's movement advantages are close to noise at this sample budget, and the update random-walks
+the sharp imitation prior toward jitter, which costs mining time and collisions. Anchoring the movement head
+holds entropy at 0.45 nats, self-play progress at 0.63 to 0.65 (the six-bail baseline is 0.64), parity with
+the solo bot, within 0.03 to 0.07 of the bail bot, and real spills at six to eight per round.
+
+What the anchor does not do is make the agent better than its warm start. Over ten million samples the v8
+bot margins are flat, and its alliance heads, which are unanchored, learn to leave early: alliances last three
+to five seconds. The mid-drift v4 snapshot at update 200 remains the most watchable agent (ten-second
+alliances, seventeen over ten seconds per round) at similar strength. The next lever on strength is more
+samples per update and a longer horizon on the movement advantage, not more rule changes.
+
 ## 6. The v2 training stack
 
 `rl/train_v2.py` implements the architecture-review recommendations: entity encoder with masked pooling,

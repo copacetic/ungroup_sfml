@@ -80,6 +80,7 @@ truth). The v2 tools:
 | `python3 rl/ladder_native.py --set mine_rate=0.1 --games 48 bail bail bail loyal loyal loyal` | Any lineup under any constants |
 | `python3 rl/train_v2.py --dr --out rl/checkpoints/v2` | DAgger warm start, critic warm-up, then PPO with the entity encoder, privileged critic, league, and rule randomisation |
 | `python3 rl/play_v2.py eval --checkpoint rl/checkpoints/v2/latest.pt` | Paired-seed evaluation against training and held-out bots |
+| `python3 rl/train_v2.py --resume rl/checkpoints/v4/warmup.pt --anchor-kl 0.3 --anchor-heads 0 --p-snapshot 0 --p-policy 0.34 ...` | Anchored run: keeps the movement head close to the imitation prior, which stopped the drift every earlier run showed |
 | `python3 rl/health.py watch --run rl/checkpoints/v4` | Run alongside training: checks every new snapshot for losing to a bot, self-play below the bot baseline, alliance collapse, bump-dominated spills, collapsed heads; writes `health.csv` and `alerts.log` |
 | `python3 rl/play_v2.py sweep --checkpoint ...` | Margin over the ladder under rule-constant perturbations (memorisation check) |
 | `python3 rl/play_v2.py record --checkpoint ... --tries 6 --out replay.json` | Record a replay with the action log; build the page with `viewer/build_viewer.py` |
