@@ -25,6 +25,21 @@
 // - A player wins by banking their full need vector. At the time limit the player with the
 //   highest progress wins (ties by banked units), so every round has a winner.
 //
+// v3 package (docs/SKILL_CEILING.md section 6), every mechanic off by default so the legacy ladder
+// reproduces exactly:
+// - Crown (crown=1): a group's pool pays out only at the pad of its head, the member with the lowest
+//   progress among those bonded to every other member for head_vest seconds (ties: most owed, then
+//   index). Recomputed at every merge, leave and bank. Solos bank at their own pad as before.
+// - Bloom (bloom_rate>0): mine stock follows logistic growth toward bloom_cap with seeding from live
+//   ring neighbours, so mines empty and regrow in cycles instead of holding a constant stock.
+// - Brand (brand=1): leaving with at least brand_min units marks the leaver publicly for
+//   brand_base + brand_per_unit * taken seconds (cap brand_max); banking for partners shortens it;
+//   merging spreads half of the other side's mark; a branded member cannot be crowned while an
+//   unbranded vested member exists; the loyal bot shuns branded bodies.
+// - Persistent ledger (persist=1): the pairwise history (co-membership, units taken, units banked
+//   for partners, who last left whom) survives resets, decayed by ledger_decay, so reputations
+//   carry across rounds; the grudge bot refuses to merge with public leavers.
+//
 // Build: g++ -O3 -march=native -std=c++17 -fopenmp -shared -fPIC -o libungroup.so ungroup.cpp
 
 #include <algorithm>
@@ -66,8 +81,23 @@ struct Cfg {
     double rammer_stun_mult = 2.5;   // the faster body in a spill is stunned this many times longer
     // reward
     double carried_shaping = 2.0, win_bonus = 10.0, lose_penalty = 2.0, relative_reward = 0.5;
+    // v3 package (all off = legacy rules)
+    int crown = 0;                 // group pools pay out only at the head's pad
+    double head_vest = 10.0;       // seconds a member must be bonded to every other member before it can be head
+    int brand = 0;                 // public betrayal mark on leavers
+    double brand_min = 4.0, brand_base = 20.0, brand_per_unit = 2.0, brand_max = 60.0;
+    double bloom_rate = 0.0;       // r: logistic growth r*S*(1-S/K) per second (replaces constant regen when > 0)
+    double seed_rate = 0.0;        // sigma: seed inflow per live neighbour, sigma*min(S_j/K,1)*(1-S_m/K)
+    double seed_floor = 0.0;       // s_min: seed inflow even with dead neighbours, s_min*(1-S_m/K)
+    double seed_range = 0.5;       // mines closer than this are ring neighbours
+    double bloom_cap = 0.0;        // K (0 = mine_cap); stock may reach 1.5 K
+    int persist = 0;               // keep the pairwise ledger across resets
+    double ledger_decay = 0.5;     // multiplier applied to the unit ledgers at each persisted reset
+    double grudge_window = 500.0;  // seconds a public leave is held against a player by the grudge bot
+    int obs_legacy = 0;            // 1 = emit the v2 observation layout (checkpoints trained before the package)
 };
-constexpr int CFG_LEN = 37;
+constexpr int CFG_LEN = 53;
+constexpr double NEVER = -1e9;
 
 void cfg_fill(Cfg& c, const double* a, int len) {
     if (len < CFG_LEN) return;
@@ -82,6 +112,10 @@ void cfg_fill(Cfg& c, const double* a, int len) {
     c.join_cooldown = a[k++]; c.partner_cooldown = a[k++]; c.leave_forfeit = a[k++]; c.intent_weight = a[k++];
     c.stun_time = a[k++]; c.leave_hold = a[k++]; c.group_bank_bonus = a[k++]; c.rammer_stun_mult = a[k++];
     c.carried_shaping = a[k++]; c.win_bonus = a[k++]; c.lose_penalty = a[k++]; c.relative_reward = a[k++];
+    c.crown = (int)a[k++]; c.head_vest = a[k++]; c.brand = (int)a[k++];
+    c.brand_min = a[k++]; c.brand_base = a[k++]; c.brand_per_unit = a[k++]; c.brand_max = a[k++];
+    c.bloom_rate = a[k++]; c.seed_rate = a[k++]; c.seed_floor = a[k++]; c.seed_range = a[k++]; c.bloom_cap = a[k++];
+    c.persist = (int)a[k++]; c.ledger_decay = a[k++]; c.grudge_window = a[k++]; c.obs_legacy = (int)a[k++];
 }
 
 void cfg_dump(const Cfg& c, double* a) {
@@ -96,6 +130,10 @@ void cfg_dump(const Cfg& c, double* a) {
     a[k++] = c.join_cooldown; a[k++] = c.partner_cooldown; a[k++] = c.leave_forfeit; a[k++] = c.intent_weight;
     a[k++] = c.stun_time; a[k++] = c.leave_hold; a[k++] = c.group_bank_bonus; a[k++] = c.rammer_stun_mult;
     a[k++] = c.carried_shaping; a[k++] = c.win_bonus; a[k++] = c.lose_penalty; a[k++] = c.relative_reward;
+    a[k++] = c.crown; a[k++] = c.head_vest; a[k++] = c.brand;
+    a[k++] = c.brand_min; a[k++] = c.brand_base; a[k++] = c.brand_per_unit; a[k++] = c.brand_max;
+    a[k++] = c.bloom_rate; a[k++] = c.seed_rate; a[k++] = c.seed_floor; a[k++] = c.seed_range; a[k++] = c.bloom_cap;
+    a[k++] = c.persist; a[k++] = c.ledger_decay; a[k++] = c.grudge_window; a[k++] = c.obs_legacy;
 }
 
 struct Vec {
@@ -114,6 +152,7 @@ struct Body {
     Vec pos, vel;
     double pool[TYPES] = {0, 0, 0, 0};
     double stun = 0;  // seconds of stun remaining
+    int head = -1;    // crown: the member whose pad the pool pays out at (always the sole member of a solo body)
     int n() const { return (int)members.size(); }
     double pool_total() const { return pool[0] + pool[1] + pool[2] + pool[3]; }
 };
@@ -137,12 +176,12 @@ struct Pickup {
     double ttl;
 };
 
-enum SeatType { SEAT_EXTERNAL = 0, SEAT_EXTERNAL2 = 1, SEAT_SOLO = 2, SEAT_BAIL = 3, SEAT_LOYAL = 4, SEAT_KIDNAP = 5, SEAT_RAMMER = 6 };
+enum SeatType { SEAT_EXTERNAL = 0, SEAT_EXTERNAL2 = 1, SEAT_SOLO = 2, SEAT_BAIL = 3, SEAT_LOYAL = 4, SEAT_KIDNAP = 5, SEAT_RAMMER = 6, SEAT_GRUDGE = 7 };
 
 struct Stats {
     double group = 0;
     int steps = 0, merges = 0, leaves = 0, spills = 0, banks = 0, group_banks = 0, remerge_fast = 0, cancels = 0;
-    int alliances = 0, alliances_long = 0;
+    int alliances = 0, alliances_long = 0, fair_banks = 0, crowns = 0;
     double alliance_dur = 0;
     double units_taken = 0;  // units carried away by leavers
 };
@@ -173,6 +212,7 @@ struct Game {
     std::vector<int> mine_type;
     std::vector<double> mine_stock;
     std::vector<char> mine_alive;
+    std::vector<std::vector<int>> mine_nbr;   // bloom: ring neighbours within seed_range
     std::deque<Pickup> picks;
     std::string events;
     std::vector<double> prev_pot;
@@ -186,10 +226,14 @@ struct Game {
     double partner_cd[MAX_PLAYERS][MAX_PLAYERS];       // t until which i may not merge with j
     double pair_since[MAX_PLAYERS][MAX_PLAYERS];       // start time of the current co-membership (-1 none)
     double pair_ended[MAX_PLAYERS][MAX_PLAYERS];       // end time of the last co-membership (-1 none)
+    double brand[MAX_PLAYERS];                         // public betrayal mark, seconds remaining
+    double last_unjust_leave[MAX_PLAYERS];             // t of the player's last leave whose victims were not all public leavers (NEVER)
+    int rounds_played = 0;                             // resets so far on this game (the ledger persists from the second on)
 
     double uniform(double a, double b) { return std::uniform_real_distribution<double>(a, b)(rng); }
     double radius(int n) const { return cfg.solo_radius * std::sqrt((double)n); }
     double need_total(int i) const { double s = 0; for (int t = 0; t < TYPES; t++) s += players[i].need[t]; return s; }
+    double mine_K() const { return cfg.bloom_cap > 0 ? cfg.bloom_cap : cfg.mine_cap; }
 
     Vec pad_pos(int i) const {
         double r = std::max(R - cfg.pad_radius - 0.02, 0.1);
@@ -240,6 +284,8 @@ struct Game {
     }
 
     void reset(uint64_t sd) {
+        double t_prev = t;
+        bool keep = cfg.persist > 0 && rounds_played > 0;
         seed = sd;
         rng.seed(sd);
         sample_cfg();
@@ -258,7 +304,7 @@ struct Game {
         }
         mine_pos.assign(cfg.n_mines, Vec());
         mine_type.assign(cfg.n_mines, 0);
-        mine_stock.assign(cfg.n_mines, cfg.mine_cap);
+        mine_stock.assign(cfg.n_mines, mine_K());
         mine_alive.assign(cfg.n_mines, 1);
         double mrot = uniform(0, 2 * PI);
         for (int m = 0; m < cfg.n_mines; m++) {
@@ -267,19 +313,37 @@ struct Game {
             mine_pos[m] = {ring * std::cos(ang), ring * std::sin(ang)};
             mine_type[m] = (cfg.n_mines >= 2 * TYPES) ? (m / 2) % TYPES : m % TYPES;
         }
+        mine_nbr.assign(cfg.n_mines, {});
+        for (int m = 0; m < cfg.n_mines; m++)
+            for (int j = 0; j < cfg.n_mines; j++)
+                if (j != m && (mine_pos[m] - mine_pos[j]).norm() < cfg.seed_range) mine_nbr[m].push_back(j);
         bodies.clear();
         for (int i = 0; i < n; i++) {
             Body b;
             b.members = {i};
+            b.head = i;
             b.pos = {0.72 * std::cos(players[i].pad_angle), 0.72 * std::sin(players[i].pad_angle)};
             bodies.push_back(b);
         }
         picks.clear();
-        for (int i = 0; i < MAX_PLAYERS; i++)
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+            if (keep) {
+                // the ledger survives: unit counts decay, timestamps shift so "seconds since" keeps counting
+                if (last_unjust_leave[i] > NEVER / 2) last_unjust_leave[i] -= t_prev;
+            } else { brand[i] = 0; last_unjust_leave[i] = NEVER; }
             for (int j = 0; j < MAX_PLAYERS; j++) {
-                comember_time[i][j] = 0; took_from[i][j] = 0; banked_while[i][j] = 0;
-                last_left_me[i][j] = -1; partner_cd[i][j] = -1; pair_since[i][j] = -1; pair_ended[i][j] = -1;
+                if (keep) {
+                    comember_time[i][j] *= cfg.ledger_decay; took_from[i][j] *= cfg.ledger_decay; banked_while[i][j] *= cfg.ledger_decay;
+                    if (last_left_me[i][j] > NEVER / 2) last_left_me[i][j] -= t_prev;
+                    partner_cd[i][j] -= t_prev;
+                } else {
+                    comember_time[i][j] = 0; took_from[i][j] = 0; banked_while[i][j] = 0;
+                    last_left_me[i][j] = NEVER; partner_cd[i][j] = -1;
+                }
+                pair_since[i][j] = -1; pair_ended[i][j] = -1;
             }
+        }
+        rounds_played++;
         prev_pot = potentials();
         if ((int)seats.size() != n) seats.assign(n, SEAT_EXTERNAL);
     }
@@ -387,6 +451,7 @@ struct Game {
     void update_timers() {
         for (Body& b : bodies) if (b.stun > 0) b.stun = std::max(0.0, b.stun - cfg.dt);
         for (Player& p : players) if (p.join_cooldown > 0) p.join_cooldown = std::max(0.0, p.join_cooldown - cfg.dt);
+        for (int i = 0; i < cfg.n_players; i++) if (brand[i] > 0) brand[i] = std::max(0.0, brand[i] - cfg.dt);
         // co-membership time
         for (const Body& b : bodies)
             if (b.n() > 1)
@@ -431,6 +496,10 @@ struct Game {
         int from_size = b.n();
         std::vector<int> former;
         for (int j : b.members) if (j != i) former.push_back(j);
+        bool all_leavers = true;
+        for (int j : former) if (!public_leaver(j)) all_leavers = false;
+        if (!all_leavers) last_unjust_leave[i] = t;
+        if (cfg.brand && taken >= cfg.brand_min) brand[i] = std::min(cfg.brand_max, std::max(brand[i], cfg.brand_base + cfg.brand_per_unit * taken));
         b.members.erase(std::find(b.members.begin(), b.members.end(), i));
         for (int j : former) {
             took_from[j][i] += taken;
@@ -450,6 +519,7 @@ struct Game {
         else u = u * (1.0 / u.norm());
         Body nb;
         nb.members = {i};
+        nb.head = i;
         nb.pos = b.pos + u * (radius(b.n()) + radius(1) + 0.02);
         nb.vel = u * 0.2;
         for (int t = 0; t < TYPES; t++) nb.pool[t] = share[t];
@@ -457,10 +527,52 @@ struct Game {
         p.join_cooldown = cfg.join_cooldown;
         p.group_since = t;
         bodies.push_back(nb);  // b is invalid after this line
+        crown(bodies[bi]);
         stats.leaves++;
         stats.units_taken += taken;
         event("\"kind\":\"leave\",\"player\":" + std::to_string(i) + ",\"share\":" + nums(share, TYPES, 2) +
               ",\"from_size\":" + std::to_string(from_size));
+    }
+
+    // ---- crown, brand and the public record
+    double owed(int j) const {  // units j watched partners receive minus units j received while grouped
+        double s = 0;
+        for (int i = 0; i < cfg.n_players; i++) if (i != j) s += banked_while[j][i] - banked_while[i][j];
+        return s;
+    }
+    bool vested(const Body& b, int j) const {
+        for (int k : b.members) if (k != j && (pair_since[j][k] < 0 || t - pair_since[j][k] < cfg.head_vest)) return false;
+        return true;
+    }
+    bool branded(int j) const { return cfg.brand && brand[j] > 0; }
+    bool body_branded(const Body& b) const { for (int j : b.members) if (branded(j)) return true; return false; }
+    bool public_leaver(int j) const { return last_unjust_leave[j] > NEVER / 2 && t - last_unjust_leave[j] < cfg.grudge_window; }
+    bool body_has_leaver(const Body& b) const { for (int j : b.members) if (public_leaver(j)) return true; return false; }
+    // Head = lowest progress among vested, unbranded members (ties: most owed, then lowest index). If nobody
+    // qualifies keep the current head while it is still a member, else relax the brand condition, then vesting.
+    void crown(Body& b) {
+        if (b.n() <= 1) { b.head = b.n() == 1 ? b.members[0] : -1; return; }
+        if (!cfg.crown) { b.head = b.members[0]; return; }
+        auto member = [&](int h) { return h >= 0 && std::find(b.members.begin(), b.members.end(), h) != b.members.end(); };
+        auto pick = [&](bool need_vest, bool need_clean) {
+            int best = -1;
+            for (int j : b.members) {
+                if (need_vest && !vested(b, j)) continue;
+                if (need_clean && branded(j)) continue;
+                if (best < 0) { best = j; continue; }
+                double pj = progress(j), pb = progress(best);
+                if (pj < pb - 1e-9 || (std::fabs(pj - pb) <= 1e-9 && (owed(j) > owed(best) + 1e-9 || (std::fabs(owed(j) - owed(best)) <= 1e-9 && j < best)))) best = j;
+            }
+            return best;
+        };
+        int h = pick(true, true);
+        if (h < 0 && member(b.head) && !branded(b.head)) h = b.head;
+        if (h < 0) h = pick(true, false);
+        if (h < 0 && member(b.head)) h = b.head;
+        if (h < 0) h = pick(false, true);
+        if (h < 0) h = pick(false, false);
+        if (h != b.head) { stats.crowns++; event("\"kind\":\"crown\",\"player\":" + std::to_string(h) + ",\"group\":" + ids(b.members)); }
+        b.head = h;
     }
 
     bool all_joinable(const Body& b) const {
@@ -541,10 +653,19 @@ struct Game {
             pair_since[i][j] = t; pair_since[j][i] = t;
         }
         for (int i : m.members) if (body_index(i) >= 0 && bodies[body_index(i)].n() == 1) players[i].group_since = t;
+        if (cfg.brand) {  // one-hop contagion: each side inherits half of the other side's worst mark
+            double ma_b = 0, mb_b = 0;
+            for (int i : a.members) ma_b = std::max(ma_b, brand[i]);
+            for (int j : b.members) mb_b = std::max(mb_b, brand[j]);
+            for (int i : a.members) brand[i] = std::max(brand[i], 0.5 * mb_b);
+            for (int j : b.members) brand[j] = std::max(brand[j], 0.5 * ma_b);
+        }
+        m.head = (a.n() >= b.n()) ? a.head : b.head;
         std::vector<Body> nb;
         for (int k = 0; k < (int)bodies.size(); k++) if (k != ai && k != bi) nb.push_back(bodies[k]);
         nb.push_back(m);
         bodies = nb;
+        crown(bodies.back());
         stats.merges++;
         if (fast) stats.remerge_fast++;
         event("\"kind\":\"merge\",\"a\":" + ids(a.members) + ",\"b\":" + ids(b.members) + ",\"size\":" + std::to_string(m.n()));
@@ -607,18 +728,25 @@ struct Game {
             if (b.pool_total() < 0.5) continue;
             double r = radius(b.n());
             for (int i : b.members) {
+                if (cfg.crown && b.n() > 1 && i != b.head) continue;  // the contract: only the head's pad pays
                 Vec pad = pad_pos(i);
                 if ((b.pos - pad).norm() < r + cfg.pad_radius) {
                     double amount[TYPES];
                     double total = b.pool_total();
                     double mult = 1.0 + cfg.group_bank_bonus * (b.n() - 1);
+                    bool fair = true;
+                    for (int j : b.members) if (progress(j) < progress(i) - 1e-9) fair = false;
                     for (int t = 0; t < TYPES; t++) { amount[t] = b.pool[t] * mult; players[i].banked[t] += amount[t]; b.pool[t] = 0; }
                     players[i].last_bank_t = t;
-                    for (int j : b.members) if (j != i) banked_while[j][i] += total;
+                    for (int j : b.members) if (j != i) {
+                        banked_while[j][i] += total;
+                        if (cfg.brand && brand[j] > 0) brand[j] = std::max(0.0, brand[j] - total);  // redemption: a second per unit banked for others
+                    }
                     stats.banks++;
-                    if (b.n() > 1) stats.group_banks++;
+                    if (b.n() > 1) { stats.group_banks++; if (fair) stats.fair_banks++; }
                     event("\"kind\":\"bank\",\"player\":" + std::to_string(i) + ",\"amount\":" + nums(amount, TYPES, 2) +
                           ",\"group\":" + ids(b.members));
+                    crown(b);
                     break;
                 }
             }
@@ -642,8 +770,24 @@ struct Game {
     }
 
     void regen() {
-        for (int m = 0; m < cfg.n_mines; m++)
-            if (mine_alive[m]) mine_stock[m] = std::min(cfg.mine_cap, mine_stock[m] + cfg.mine_regen * cfg.dt);
+        if (cfg.bloom_rate <= 0) {
+            for (int m = 0; m < cfg.n_mines; m++)
+                if (mine_alive[m]) mine_stock[m] = std::min(cfg.mine_cap, mine_stock[m] + cfg.mine_regen * cfg.dt);
+            return;
+        }
+        // Bloom: logistic growth toward K plus seeding from live ring neighbours; a dead ring recovers from the floor term.
+        double K = mine_K();
+        std::vector<double> ns(mine_stock);
+        for (int m = 0; m < cfg.n_mines; m++) {
+            if (!mine_alive[m]) continue;
+            double x = mine_stock[m] / K;
+            double growth = cfg.bloom_rate * mine_stock[m] * (1.0 - x);
+            double free = std::max(0.0, 1.0 - x);
+            double seed = cfg.seed_floor * free;
+            for (int j : mine_nbr[m]) if (mine_alive[j]) seed += cfg.seed_rate * std::min(mine_stock[j] / K, 1.0) * free;
+            ns[m] = std::min(std::max(0.0, mine_stock[m] + (growth + seed) * cfg.dt), 1.5 * K);
+        }
+        mine_stock.swap(ns);
     }
 
     // -------------------------------------------------------------- reward
@@ -672,11 +816,13 @@ struct Game {
 
     // --------------------------------------------------------- observation
 
-    static constexpr int OWN_DIM = 33 + N_DR;
-    static constexpr int OTHER_DIM = 22;
+    // v3 appends two features to the own block (is_head, brand) and two per other slot (is_head, brand);
+    // obs_legacy=1 emits the v2 layout so checkpoints trained before the package still run.
+    int own_dim() const { return 33 + N_DR + (cfg.obs_legacy ? 0 : 2); }
+    int other_dim() const { return 22 + (cfg.obs_legacy ? 0 : 2); }
     static constexpr int MINE_DIM = 8;
     static constexpr int PICK_DIM = 7;
-    int obs_dim() const { return OWN_DIM + MAX_SLOTS * OTHER_DIM + cfg.n_mines * MINE_DIM + N_PICKUPS_OBS * PICK_DIM; }
+    int obs_dim() const { return own_dim() + MAX_SLOTS * other_dim() + cfg.n_mines * MINE_DIM + N_PICKUPS_OBS * PICK_DIM; }
     static constexpr int PRIV_SLOT = 17;
     int priv_dim() const { return MAX_SLOTS * PRIV_SLOT + MAX_SLOTS; }
 
@@ -719,6 +865,7 @@ struct Game {
             f[c++] = p.join_cooldown / std::max(cfg.join_cooldown, 1e-6);
             f[c++] = b.stun / std::max(cfg.stun_time, 1e-6);
             dr_features(f + c); c += N_DR;
+            if (!cfg.obs_legacy) { f[c++] = (b.n() > 1 && b.head == i) ? 1.f : 0.f; f[c++] = std::min(brand[i] / 60.0, 1.0); }
             // Others sorted by distance, stable on index; MAX_SLOTS slots with presence flag.
             std::vector<std::pair<double, int>> order;
             for (int j = 0; j < k; j++) if (j != i) order.push_back({(bodies[bidx[j]].pos - pos).norm(), j});
@@ -743,15 +890,16 @@ struct Game {
                 f[c++] = std::min(comember_time[i][j] / 60.0, 1.0);
                 f[c++] = std::min(took_from[i][j] / 10.0, 1.0);
                 f[c++] = std::min(banked_while[i][j] / 10.0, 1.0);
-                f[c++] = last_left_me[i][j] < 0 ? 1.f : (float)std::min((t - last_left_me[i][j]) / 60.0, 1.0);
+                f[c++] = last_left_me[i][j] < NEVER / 2 ? 1.f : (float)std::min(std::max(t - last_left_me[i][j], 0.0) / 60.0, 1.0);
                 f[c++] = (partner_cd[i][j] > t || q.join_cooldown > 0) ? 1.f : 0.f;
+                if (!cfg.obs_legacy) { f[c++] = (bj.n() > 1 && bj.head == j) ? 1.f : 0.f; f[c++] = std::min(brand[j] / 60.0, 1.0); }
                 slot++;
             }
-            for (; slot < MAX_SLOTS; slot++) for (int z = 0; z < OTHER_DIM; z++) f[c++] = 0.f;
+            for (; slot < MAX_SLOTS; slot++) for (int z = 0; z < other_dim(); z++) f[c++] = 0.f;
             for (int m = 0; m < cfg.n_mines; m++) {
                 f[c++] = mine_pos[m].x - pos.x; f[c++] = mine_pos[m].y - pos.y;
                 for (int t = 0; t < TYPES; t++) f[c++] = (mine_type[m] == t) ? 1.f : 0.f;
-                f[c++] = mine_stock[m] / cfg.mine_cap;
+                f[c++] = mine_stock[m] / mine_K();
                 f[c++] = mine_alive[m] ? 1.f : 0.f;
             }
             std::vector<std::pair<double, int>> po;
@@ -904,7 +1052,7 @@ struct Game {
                 if (j == i) continue;
                 if ((pad_pos(j) - b.pos).norm() < pad_danger && b.pool_total() >= bail_at) leave = 1;
             }
-            if (b.pool_total() >= bank_at) { target = my_pad; has = true; }
+            if (b.pool_total() >= bank_at) { target = cfg.crown && b.head >= 0 ? pad_pos(b.head) : my_pad; has = true; }
             if (my_share >= bail_at && (my_pad - b.pos).norm() > 0.6 && leave == 0) leave = 1;
         } else {
             if (b.pool_total() >= bail_at) { target = my_pad; has = true; }
@@ -926,13 +1074,15 @@ struct Game {
         bool has = false;
         Vec target;
         if (b.n() > 1 && b.pool_total() >= bank_at) {
-            // Fair rotation: bank at the pad of the member who is furthest behind.
+            // Fair rotation: bank at the pad of the member who is furthest behind (the head, under the crown).
             double best = 2.0;
             for (int j : b.members) { double pj = progress(j); if (pj < best) { best = pj; target = pad_pos(j); has = true; } }
+            if (cfg.crown && b.head >= 0) target = pad_pos(b.head);
         } else if (b.n() == 1) {
             if (b.pool_total() >= bank_at) { target = pad_pos(i); has = true; }
             else {
                 int k = nearest_joinable_body(i, b.pos, 0.6);
+                if (k >= 0 && body_branded(bodies[k])) k = -1;
                 if (k >= 0 && players[i].join_cooldown <= 0) { target = bodies[k].pos; has = true; }
             }
         }
@@ -940,8 +1090,46 @@ struct Game {
             if (b.n() > 1) target = group_mine_target(b, &has); else target = mine_target(i, b.pos, &has);
             if (!has) target = pad_pos(i);
         }
+        int joinable = 1;
+        if (cfg.brand)  // shun: close the door while a branded body is within reach
+            for (const Body& o : bodies) if (&o != &b && body_branded(o) && (o.pos - b.pos).norm() < 0.25 + radius(b.n()) + radius(o.n())) joinable = 0;
         act[0] = direction_to_move(target - b.pos);
-        act[1] = 1;
+        act[1] = joinable;
+        act[2] = 0;
+        act[3] = intent_for(i) + 1;
+    }
+
+    // Grudge: loyal, but never seeks and never admits anyone who publicly left a partner within grudge_window s
+    // (with the persistent ledger a leave in one round is remembered in the next). Leaving a leaver is not held against you.
+    void bot_grudge(int i, int* act) const {
+        const Body& b = bodies[body_index(i)];
+        double bank_at = 0.28 * need_total(i);
+        bool has = false;
+        Vec target;
+        int joinable = 1;
+        if (b.n() > 1 && b.pool_total() >= bank_at) {
+            double best = 2.0;
+            for (int j : b.members) { double pj = progress(j); if (pj < best) { best = pj; target = pad_pos(j); has = true; } }
+            if (cfg.crown && b.head >= 0) target = pad_pos(b.head);
+        } else if (b.n() == 1) {
+            if (b.pool_total() >= bank_at) { target = pad_pos(i); has = true; }
+            else if (players[i].join_cooldown <= 0) {
+                double bd = 0.6;
+                for (const Body& o : bodies) {
+                    if (&o == &b || !all_joinable(o) || body_has_leaver(o) || body_branded(o)) continue;
+                    double d = (o.pos - b.pos).norm();
+                    if (d < bd) { bd = d; target = o.pos; has = true; }
+                }
+            }
+        }
+        for (const Body& o : bodies)
+            if (&o != &b && (o.pos - b.pos).norm() < 0.25 + radius(b.n()) + radius(o.n()) && (body_has_leaver(o) || body_branded(o))) joinable = 0;
+        if (!has) {
+            if (b.n() > 1) target = group_mine_target(b, &has); else target = mine_target(i, b.pos, &has);
+            if (!has) target = pad_pos(i);
+        }
+        act[0] = direction_to_move(target - b.pos);
+        act[1] = joinable;
         act[2] = 0;
         act[3] = intent_for(i) + 1;
     }
@@ -1000,6 +1188,7 @@ struct Game {
             case SEAT_LOYAL: bot_loyal(i, act); break;
             case SEAT_KIDNAP: bot_kidnap(i, act); break;
             case SEAT_RAMMER: bot_rammer(i, act); break;
+            case SEAT_GRUDGE: bot_grudge(i, act); break;
             default: act[0] = 0; act[1] = 0; act[2] = 0; act[3] = 0;
         }
     }
@@ -1015,7 +1204,7 @@ struct Game {
             const Body& b = bodies[k];
             if (k) s += ",";
             snprintf(buf, sizeof buf, ",\"x\":%.3f,\"y\":%.3f,\"vx\":%.3f,\"vy\":%.3f,\"stun\":%.1f,\"pool\":", b.pos.x, b.pos.y, b.vel.x, b.vel.y, b.stun);
-            s += "{\"m\":" + ids(b.members) + buf + nums(b.pool, TYPES, 1) + "}";
+            s += "{\"m\":" + ids(b.members) + buf + nums(b.pool, TYPES, 1) + ",\"head\":" + std::to_string(b.head) + "}";
         }
         s += "],\"mines\":" + nums(mine_stock.data(), cfg.n_mines, 1) + ",\"alive\":[";
         for (int m = 0; m < cfg.n_mines; m++) { if (m) s += ","; s += mine_alive[m] ? "true" : "false"; }
@@ -1030,8 +1219,9 @@ struct Game {
             const Player& p = players[i];
             if (i) s += ",";
             s += "{\"banked\":" + nums(p.banked, TYPES, 1);
-            snprintf(buf, sizeof buf, ",\"intent\":%d,\"join\":%s,\"leaving\":%.1f,\"cd\":%.1f,\"dir\":[%.2f,%.2f]}", p.intent,
-                     p.joinable ? "true" : "false", p.leave_timer >= 0 ? p.leave_timer : -1.0, p.join_cooldown, p.dir.x, p.dir.y);
+            snprintf(buf, sizeof buf, ",\"intent\":%d,\"join\":%s,\"leaving\":%.1f,\"cd\":%.1f,\"dir\":[%.2f,%.2f],\"brand\":%.1f,\"leaver\":%s}", p.intent,
+                     p.joinable ? "true" : "false", p.leave_timer >= 0 ? p.leave_timer : -1.0, p.join_cooldown, p.dir.x, p.dir.y,
+                     brand[i], public_leaver(i) ? "true" : "false");
             s += buf;
         }
         s += "],\"events\":[" + events + "]}";
@@ -1062,7 +1252,7 @@ struct Batch {
     uint64_t next_seed = 1;
 };
 
-constexpr int STATS_BASE = 13;
+constexpr int STATS_BASE = 15;
 
 }  // namespace
 
@@ -1111,6 +1301,13 @@ void ugb_reset(void* h, int env, unsigned long long seed) {
     b->games[env].reset(seed ? seed : b->next_seed++);
 }
 
+// Start a fresh series: forget the persisted ledger before resetting.
+void ugb_reset_series(void* h, int env, unsigned long long seed) {
+    Batch* b = (Batch*)h;
+    b->games[env].rounds_played = 0;
+    b->games[env].reset(seed ? seed : b->next_seed++);
+}
+
 void ugb_observe(void* h, float* obs) {
     Batch* b = (Batch*)h;
     int D = b->games[0].obs_dim(), n = b->games[0].cfg.n_players;
@@ -1142,7 +1339,7 @@ void ugb_cfg(void* h, int env, double* out) { cfg_dump(((Batch*)h)->games[env].c
 // privileged block (E, n, P). On episode end with auto_reset, the game is reset (fresh seed) before
 // its observation is written and its summary goes to ep_stats (E, STATS_BASE + n + N_DR):
 // [winner, length, avg_group, merges, leaves, spills, banks, ended, group_banks, remerge_fast,
-//  alliances, mean_alliance_dur, alliances_long, progress..., dr constants...].
+//  alliances, mean_alliance_dur, alliances_long, fair_banks, crowns, progress..., dr constants...].
 void ugb_step(void* h, const int* actions, float* rewards, unsigned char* dones, float* obs, float* priv, int auto_reset,
               double* ep_stats, int decide_every_override) {
     Batch* b = (Batch*)h;
@@ -1187,6 +1384,7 @@ void ugb_step(void* h, const int* actions, float* rewards, unsigned char* dones,
             st[3] = g.stats.merges; st[4] = g.stats.leaves; st[5] = g.stats.spills; st[6] = g.stats.banks; st[7] = g.timeout_win ? 2 : 1;
             st[8] = g.stats.group_banks; st[9] = g.stats.remerge_fast; st[10] = g.stats.alliances / 2.0;
             st[11] = g.stats.alliances ? g.stats.alliance_dur / g.stats.alliances : 0; st[12] = g.stats.alliances_long / 2.0;
+            st[13] = g.stats.fair_banks; st[14] = g.stats.crowns;
             for (int i = 0; i < n; i++) st[STATS_BASE + i] = g.progress(i);
             float dr[N_DR];
             g.dr_features(dr);

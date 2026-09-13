@@ -38,12 +38,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from ungroup.native import (HELDOUT_BOTS, MAX_SLOTS, N_DR, SEAT_BAIL, SEAT_EXTERNAL, SEAT_EXTERNAL2, SEAT_NAMES,  # noqa: E402
+from ungroup.native import (HELDOUT_BOTS, MAX_SLOTS, N_DR, PRESETS, SEAT_BAIL, SEAT_EXTERNAL, SEAT_EXTERNAL2, SEAT_NAMES, preset,  # noqa: E402
                             TRAINING_BOTS, TYPES, Config, NativeBatch)
 
 ACTION_NVEC = (9, 2, 2, 5)
-OWN_DIM = 33 + N_DR
-OTHER_DIM = 22
+OWN_DIM = 33 + N_DR + 2   # v3 layout: + is_head, brand
+OTHER_DIM = 22 + 2
+OWN_DIM_LEGACY = 33 + N_DR
+OTHER_DIM_LEGACY = 22
 MINE_DIM = 8
 PICK_DIM = 7
 N_PICKUPS = 4
@@ -61,25 +63,26 @@ def ortho(layer, gain=math.sqrt(2)):
 
 
 class Policy(nn.Module):
-    def __init__(self, obs_dim, n_mines=8, hidden=256, ent=64, max_group=6):
+    def __init__(self, obs_dim, n_mines=8, hidden=256, ent=64, max_group=6, own_dim=OWN_DIM, other_dim=OTHER_DIM):
         super().__init__()
         self.obs_dim = obs_dim
         self.n_mines = n_mines
         self.max_group = max_group
-        self.own = nn.Sequential(ortho(nn.Linear(OWN_DIM, 128)), nn.ReLU())
-        self.oth = nn.Sequential(ortho(nn.Linear(OTHER_DIM, ent)), nn.ReLU(), ortho(nn.Linear(ent, ent)), nn.ReLU())
+        self.own_dim, self.other_dim = own_dim, other_dim
+        self.own = nn.Sequential(ortho(nn.Linear(own_dim, 128)), nn.ReLU())
+        self.oth = nn.Sequential(ortho(nn.Linear(other_dim, ent)), nn.ReLU(), ortho(nn.Linear(ent, ent)), nn.ReLU())
         self.mine = nn.Sequential(ortho(nn.Linear(n_mines * MINE_DIM, 64)), nn.ReLU())
         self.pick = nn.Sequential(ortho(nn.Linear(PICK_DIM, 32)), nn.ReLU())
         tin = 128 + 3 * ent + 64 + 32
         self.trunk = nn.Sequential(ortho(nn.Linear(tin, hidden)), nn.LayerNorm(hidden), nn.ReLU(),
                                    ortho(nn.Linear(hidden, hidden)), nn.LayerNorm(hidden), nn.ReLU())
         self.heads = nn.ModuleList([ortho(nn.Linear(hidden, n), gain=0.01) for n in ACTION_NVEC])
-        assert obs_dim == OWN_DIM + MAX_SLOTS * OTHER_DIM + n_mines * MINE_DIM + N_PICKUPS * PICK_DIM, obs_dim
+        assert obs_dim == own_dim + MAX_SLOTS * other_dim + n_mines * MINE_DIM + N_PICKUPS * PICK_DIM, obs_dim
 
     def split(self, obs):
         c = 0
-        own = obs[:, c:c + OWN_DIM]; c += OWN_DIM
-        oth = obs[:, c:c + MAX_SLOTS * OTHER_DIM].reshape(-1, MAX_SLOTS, OTHER_DIM); c += MAX_SLOTS * OTHER_DIM
+        own = obs[:, c:c + self.own_dim]; c += self.own_dim
+        oth = obs[:, c:c + MAX_SLOTS * self.other_dim].reshape(-1, MAX_SLOTS, self.other_dim); c += MAX_SLOTS * self.other_dim
         mines = obs[:, c:c + self.n_mines * MINE_DIM]; c += self.n_mines * MINE_DIM
         picks = obs[:, c:c + N_PICKUPS * PICK_DIM].reshape(-1, N_PICKUPS, PICK_DIM)
         return own, oth, mines, picks
@@ -184,14 +187,20 @@ def git_sha():
 def save_checkpoint(path, policy, critic, cfg, samples, extra=None):
     torch.save({"arch": ARCH, "policy": policy.state_dict(), "critic": critic.state_dict() if critic else None,
                 "config": asdict(cfg), "obs_dim": policy.obs_dim, "n_mines": policy.n_mines, "max_group": policy.max_group,
+                "own_dim": policy.own_dim, "other_dim": policy.other_dim,
                 "samples": samples, "git": git_sha(), "extra": extra or {}}, path)
 
 
 def load_checkpoint(path):
     ck = torch.load(path, map_location="cpu", weights_only=False)
     assert ck.get("arch") == ARCH, f"{path} is not a {ARCH} checkpoint"
-    cfg = Config(**ck["config"])
-    policy = Policy(ck["obs_dim"], n_mines=ck["n_mines"], max_group=ck["max_group"])
+    legacy = "own_dim" not in ck   # trained before the v3 package: v2 observation layout, legacy rules
+    conf = dict(ck["config"])
+    if legacy:
+        conf["obs_legacy"] = 1
+    cfg = Config(**conf)
+    policy = Policy(ck["obs_dim"], n_mines=ck["n_mines"], max_group=ck["max_group"],
+                    own_dim=ck.get("own_dim", OWN_DIM_LEGACY), other_dim=ck.get("other_dim", OTHER_DIM_LEGACY))
     policy.load_state_dict(ck["policy"])
     policy.eval()
     return policy, cfg, ck
@@ -320,6 +329,7 @@ def main():
     ap.add_argument("--anchor-heads", default="0", help="comma list of head indices the anchor applies to (0 move, 1 join, 2 leave, 3 intent)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--set", action="append", help="override a Config field, e.g. --set mine_rate=0.12")
+    ap.add_argument("--preset", default="legacy", choices=sorted(PRESETS), help="named rule set (legacy, crown, bloom, life, series)")
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
@@ -327,7 +337,7 @@ def main():
     torch.set_num_threads(args.threads)
     rng = np.random.default_rng(args.seed)
     os.makedirs(args.out, exist_ok=True)
-    cfg = Config(n_players=args.players)
+    cfg = preset(args.preset, n_players=args.players)
     for kv in args.set or []:
         k, v = kv.split("=")
         f = Config.__dataclass_fields__[k]

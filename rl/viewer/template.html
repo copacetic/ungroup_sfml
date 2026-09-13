@@ -156,6 +156,7 @@
   .tag.bank { background: #2f4a2a; color: #b6e3a5; }
   .tag.spill { background: #5c2c2c; color: var(--res-d); }
   .tag.mine { background: #3a3852; color: var(--ink-2); }
+  .tag.crown { background: #4a3f1a; color: #f5c542; }
   .tag.win { background: var(--accent); color: #101018; }
 
   .legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11px; color: var(--ink-2); font-family: "IBM Plex Mono", monospace; }
@@ -198,6 +199,8 @@
         <span><i style="background:var(--res-d)"></i>D</span>
         <span>dashed ring = joinable</span>
         <span>pulsing slice = leaving</span>
+        <span>gold notch = crown (the pad that pays)</span>
+        <span>red arc = branded leaver</span>
         <span>edge disc = home pad</span>
       </div>
       <p class="rules" style="margin-top:8px">Groups mine much faster than solos and share one pool. Touching a member's pad banks the whole pool to that member. Leaving must be held for 2 s, splits the pool 3:1 toward your declared colour minus a 15% forfeit, and locks you out of joining for a while. Hard bumps spill carried units and stun both bodies. The arena shrinks. At the time limit the leader wins. <kbd>space</kbd> play, <kbd>←</kbd> <kbd>→</kbd> step.</p>
@@ -250,6 +253,7 @@
       case 'bank': return { tag: 'bank', text: `${nm(e.player)} banked ${e.amount.reduce((a, b) => a + b, 0).toFixed(1)}` + (e.group.length > 1 ? ` (group of ${e.group.length})` : '') };
       case 'spill': if (!e.units) return null; return { tag: 'spill', text: `${e.a.map(nm).join('+')} hit ${e.b.map(nm).join('+')}: ${e.units} units spilled` };
       case 'mine_dead': return { tag: 'mine', text: `Mine ${e.mine} (${RESN[R.mine_type[e.mine]]}) swallowed by the edge` };
+      case 'crown': return e.group && e.group.length > 1 ? { tag: 'crown', text: `${nm(e.player)} holds the crown of ${e.group.map(nm).join(' + ')}` } : null;
       case 'win': return { tag: 'win', text: `${nm(e.player)} wins`, big: true };
       case 'timeout': return { tag: 'win', text: e.player !== undefined ? `Time limit: ${nm(e.player)} leads and wins` : 'Time limit reached', big: true };
     }
@@ -366,6 +370,8 @@
         c.nums[t].textContent = `${p.banked[t].toFixed(0)}/${need[t]}`;
       }
       let st = b && b.m.length > 1 ? `group ${b.m.length}` : 'solo';
+      if (b && b.m.length > 1 && cfg.crown > 0 && b.head === i) st += ' · crown';
+      if (p.brand > 0) st += ` · branded ${p.brand.toFixed(0)}s`;
       if (p.leaving >= 0) st += ' · leaving';
       else if (p.cd > 0) st += ' · cooldown';
       else if (p.join) st += ' · open';
@@ -417,7 +423,7 @@
     for (let m = 0; m < R.mine_pos.length; m++) {
       const [mx, my] = R.mine_pos[m];
       const alive = fr.alive[m];
-      const stock = fr.mines[m] / cfg.mine_cap;
+      const stock = Math.min(1.5, fr.mines[m] / ((cfg.bloom_cap > 0) ? cfg.bloom_cap : cfg.mine_cap));
       const col = RES[R.mine_type[m]];
       ctx.beginPath(); ctx.arc(X(mx), Y(my), cfg.mine_radius * S, 0, Math.PI * 2);
       ctx.fillStyle = alive ? '#2f2d45' : '#1e1c2c'; ctx.fill();
@@ -506,7 +512,27 @@
         ctx.fillStyle = RES[fr.players[i].intent];
         ctx.beginPath(); ctx.arc(ix, iy, Math.max(2, r * 0.16), 0, Math.PI * 2); ctx.fill();
         ctx.strokeStyle = '#101018'; ctx.lineWidth = 1; ctx.stroke();
+        // Brand: a red arc on the member's rim while the mark lasts
+        if (fr.players[i].brand > 0) {
+          ctx.strokeStyle = '#ff5c5c'; ctx.lineWidth = 3; ctx.globalAlpha = 0.9;
+          ctx.beginPath(); ctx.arc(px, py, r + 3, k * slice - Math.PI / 2 + 0.08, (k + 1) * slice - Math.PI / 2 - 0.08); ctx.stroke();
+          ctx.globalAlpha = 1;
+        }
       });
+      // Crown: a gold notch on the head's slice (the pad where the group's pool pays out)
+      if (n > 1 && cfg.crown > 0 && b.head !== undefined && b.head >= 0) {
+        const k = members.indexOf(b.head);
+        if (k >= 0) {
+          const ang = (k + 0.5) * slice - Math.PI / 2;
+          const cx = px + Math.cos(ang) * (r + 7), cy = py + Math.sin(ang) * (r + 7);
+          ctx.fillStyle = '#f5c542'; ctx.strokeStyle = '#101018'; ctx.lineWidth = 1;
+          ctx.beginPath();
+          for (let q = 0; q < 3; q++) { const a = ang + Math.PI + (q - 1) * 0.9; const rr = q === 1 ? 6 : 4.5;
+            const vx = cx + Math.cos(a) * rr, vy = cy + Math.sin(a) * rr; if (q === 0) ctx.moveTo(vx, vy); else ctx.lineTo(vx, vy); }
+          ctx.lineTo(cx + Math.cos(ang + Math.PI - 1.4) * 3, cy + Math.sin(ang + Math.PI - 1.4) * 3);
+          ctx.closePath(); ctx.fill(); ctx.stroke();
+        }
+      }
     }
 
     // Flashes

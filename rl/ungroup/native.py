@@ -63,6 +63,23 @@ class Config:
     win_bonus: float = 10.0
     lose_penalty: float = 2.0
     relative_reward: float = 0.5
+    # v3 package (docs/SKILL_CEILING.md section 6); every mechanic off = legacy rules
+    crown: int = 0
+    head_vest: float = 10.0
+    brand: int = 0
+    brand_min: float = 4.0
+    brand_base: float = 20.0
+    brand_per_unit: float = 2.0
+    brand_max: float = 60.0
+    bloom_rate: float = 0.0
+    seed_rate: float = 0.0
+    seed_floor: float = 0.0
+    seed_range: float = 0.5
+    bloom_cap: float = 0.0
+    persist: int = 0
+    ledger_decay: float = 0.5
+    grudge_window: float = 500.0
+    obs_legacy: int = 0
 
     def to_array(self):
         return [float(v) for v in asdict(self).values()]
@@ -84,9 +101,27 @@ class Config:
 
 CFG_FIELDS = list(Config.__dataclass_fields__.keys())
 
-SEAT_EXTERNAL, SEAT_EXTERNAL2, SEAT_SOLO, SEAT_BAIL, SEAT_LOYAL, SEAT_KIDNAP, SEAT_RAMMER = range(7)
+SEAT_EXTERNAL, SEAT_EXTERNAL2, SEAT_SOLO, SEAT_BAIL, SEAT_LOYAL, SEAT_KIDNAP, SEAT_RAMMER, SEAT_GRUDGE = range(8)
 SEAT_NAMES = {"policy": SEAT_EXTERNAL, "snapshot": SEAT_EXTERNAL2, "solo": SEAT_SOLO, "bail": SEAT_BAIL,
-              "loyal": SEAT_LOYAL, "kidnap": SEAT_KIDNAP, "rammer": SEAT_RAMMER}
+              "loyal": SEAT_LOYAL, "kidnap": SEAT_KIDNAP, "rammer": SEAT_RAMMER, "grudge": SEAT_GRUDGE}
+
+# Named rule sets. 'life' is the package from docs/SKILL_CEILING.md: crown + bloom + brand; add persist=1 for series play.
+PRESETS = {
+    "legacy": {},
+    "crown": dict(crown=1),
+    "bloom": dict(bloom_rate=0.1, seed_rate=0.15, seed_floor=0.05, bloom_cap=6.0),
+    "life": dict(crown=1, brand=1, bloom_rate=0.1, seed_rate=0.15, seed_floor=0.05, bloom_cap=6.0),
+    "series": dict(crown=1, brand=1, bloom_rate=0.1, seed_rate=0.15, seed_floor=0.05, bloom_cap=6.0, persist=1),
+}
+
+
+def preset(name, **overrides):
+    """Config for a named rule set; bloom_cap scales with the lobby when n_players is overridden."""
+    kw = dict(PRESETS[name])
+    kw.update(overrides)
+    if kw.get("bloom_rate", 0) > 0 and "bloom_cap" not in overrides:
+        kw["bloom_cap"] = float(kw.get("n_players", 6))
+    return Config(**kw)
 SEAT_LABEL = {v: k for k, v in SEAT_NAMES.items()}
 TRAINING_BOTS = ["solo", "bail", "loyal"]
 HELDOUT_BOTS = ["kidnap", "rammer"]
@@ -113,6 +148,7 @@ def _load():
     lib.ugb_set_cfg_range.argtypes = [ctypes.c_void_p, P(ctypes.c_double), P(ctypes.c_double), ctypes.c_int]
     lib.ugb_set_seats.argtypes = [ctypes.c_void_p, ctypes.c_int, P(ctypes.c_int)]
     lib.ugb_reset.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_ulonglong]
+    lib.ugb_reset_series.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_ulonglong]
     lib.ugb_observe.argtypes = [ctypes.c_void_p, P(ctypes.c_float)]
     lib.ugb_observe_priv.argtypes = [ctypes.c_void_p, P(ctypes.c_float)]
     lib.ugb_bot_actions.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, P(ctypes.c_int)]
@@ -142,7 +178,7 @@ def _ptr(arr, ctype):
 
 
 STAT_KEYS = ["winner", "length", "avg_group", "merges", "leaves", "spills", "banks", "ended", "group_banks",
-             "remerge_fast", "alliances", "alliance_dur", "alliances_long"]
+             "remerge_fast", "alliances", "alliance_dur", "alliances_long", "fair_banks", "crowns"]
 
 
 class NativeBatch:
@@ -183,8 +219,12 @@ class NativeBatch:
         arr = (ctypes.c_int * self.n)(*vals)
         self.lib.ugb_set_seats(self.h, env, arr)
 
-    def reset(self, env, seed=0):
-        self.lib.ugb_reset(self.h, env, seed)
+    def reset(self, env, seed=0, fresh=False):
+        """Start a new round. With persist=1 the ledger carries over unless fresh=True (a new series)."""
+        if fresh:
+            self.lib.ugb_reset_series(self.h, env, seed)
+        else:
+            self.lib.ugb_reset(self.h, env, seed)
 
     def observe(self):
         self.lib.ugb_observe(self.h, _ptr(self._obs, ctypes.c_float))

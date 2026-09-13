@@ -15,7 +15,7 @@ import time
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from ungroup.native import Config, NativeBatch, SEAT_NAMES  # noqa: E402
+from ungroup.native import PRESETS, Config, NativeBatch, preset, SEAT_NAMES  # noqa: E402
 
 
 def run(seats, games=48, seed=1000, cfg=None, quiet=False):
@@ -95,12 +95,15 @@ def gates(cfg=None, games=48, seed=1000):
     print("== six loyal"); run(["loyal"] * 6, games, seed, cfg)
     print("== three bail + three solo"); run(["bail"] * 3 + ["solo"] * 3, games, seed, cfg)
     print("== three bail + three loyal"); run(["bail"] * 3 + ["loyal"] * 3, games, seed, cfg)
+    print("== five bail + one loyal"); run(["bail"] * 5 + ["loyal"], games, seed, cfg)
+    print("== one bail + five loyal"); run(["bail"] + ["loyal"] * 5, games, seed, cfg)
+    print("== one solo + five loyal"); run(["solo"] + ["loyal"] * 5, games, seed, cfg)
     print("== two bail + two loyal + two kidnap"); run(["bail"] * 2 + ["loyal"] * 2 + ["kidnap"] * 2, games, seed, cfg)
     print("== two bail + two loyal + two rammer"); run(["bail"] * 2 + ["loyal"] * 2 + ["rammer"] * 2, games, seed, cfg)
 
 
-def parse_sets(sets):
-    cfg = Config()
+def parse_sets(sets, preset_name="legacy"):
+    cfg = preset(preset_name)
     for kv in sets or []:
         k, v = kv.split("=")
         f = Config.__dataclass_fields__[k]
@@ -114,9 +117,10 @@ if __name__ == "__main__":
     ap.add_argument("--seed", type=int, default=1000)
     ap.add_argument("--set", action="append", help="override a Config field, e.g. --set mine_rate=0.2")
     ap.add_argument("--gates", action="store_true")
+    ap.add_argument("--preset", default="legacy", choices=sorted(PRESETS), help="named rule set (legacy, crown, bloom, life, series)")
     ap.add_argument("bots", nargs="*")
     a = ap.parse_args()
-    cfg = parse_sets(a.set)
+    cfg = parse_sets(a.set, a.preset)
     if a.gates:
         gates(cfg, a.games, a.seed)
     else:

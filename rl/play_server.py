@@ -22,7 +22,7 @@ import time
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from ungroup.native import Config, NativeBatch  # noqa: E402
+from ungroup.native import PRESETS, Config, NativeBatch, preset  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -121,9 +121,10 @@ async def main():
     ap.add_argument("--checkpoint", default=None)
     ap.add_argument("--replays", default=os.path.join(HERE, "replays"))
     ap.add_argument("--set", action="append")
+    ap.add_argument("--preset", default="legacy", choices=sorted(PRESETS), help="named rule set (legacy, crown, bloom, life, series)")
     args = ap.parse_args()
 
-    cfg = Config()
+    cfg = preset(args.preset)
     for kv in args.set or []:
         k, v = kv.split("=")
         f = Config.__dataclass_fields__[k]
