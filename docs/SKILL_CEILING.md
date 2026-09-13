@@ -345,3 +345,44 @@ Artefact index:
 | Crown, Bond, Brand prototype | `social/ungroup_social.cpp`, `patch.py`, `ladder_*.txt`, `ladder2_log.txt`, `frames.py`, `chains.py`, `policy_log.txt`, `replay_12bh_contag_seed5012.html`, `fig_brand_groups.png` |
 | Tidewater prototype | `spatial/proto.diff`, `run_variant.py`, `crowdlib.py`, `proxbank.py`, `lobe_stat.py`, `res_*.json`, `crowd_*_32_*.json` |
 | Grudge and Bloom prototype | `evolution/make_patch.py`, `native_ev.py`, `expP2.json`, `expF_*.json`, `analyze.py`, `expB.log`, `expM.json` |
+
+## Implementation status (13 September 2026)
+
+The package is in the canonical core (`rl/native/ungroup.cpp`) as `Config` fields that default to off; with
+everything off the nine legacy gate lineups reproduce to the third decimal. Presets `crown`, `bloom`, `life`
+(crown + bloom + brand) and `series` (life + persist) live in `rl/ungroup/native.py`; `rl/series.py` plays
+consecutive rounds; the `grudge` bot is the reference ledger reader; the viewer draws the crown notch, the
+brand arcs and the blooming stock. One constant moved during integration: the bloom capacity is players + 2
+(8 at six players) rather than the players proposed in 6.2, because at K = 6 the crown and the bloom
+together cut the six-loyal margin over six-bail to 0.03, below the 0.04 gate; at K = 8 it is 0.075.
+
+Gates on the `life` preset (24 rounds, seed 1000):
+
+| gate | must hold | measured |
+|---|---|---|
+| ordering | six loyal > six bail by 0.04; six bail > six solo | 0.765 / 0.690 / 0.632 |
+| the sucker payoff | 5 bail + 1 loyal: loyal above 0.6 | 0.663 |
+| temptation survives | 5 bail + 1 loyal: bail above loyal; 1 bail + 5 loyal: bail below loyal | 0.716 vs 0.663; 0.605 vs 0.729 |
+| cooperation beats solo | 1 bail + 5 loyal: bail above 1 solo + 5 loyal | 0.605 vs 0.509 |
+| kidnap loses | below 0.25 | 0.120 |
+| rammer loses | below both residents, zero wins | 0.417 vs 0.620 / 0.780, 0 wins |
+| negative control | crown only, head_vest = 0: the lone bail among five loyals gains | 0.648 to 0.710 with vesting removed, loyal 0.730; the sniper gains 0.06 but does not overtake as the prototype reported |
+
+Ledger gate (`rl/series.py --preset legacy --set persist=1`, 4 bail + 2 grudge, 24 lobbies, same seats):
+
+| round | grudge | bail | control (persist off) grudge / bail |
+|---|---|---|---|
+| 0 | 0.276 | 0.558 | 0.276 / 0.558 |
+| 1 | 0.571 | 0.596 | 0.279 / 0.558 |
+| 2 | 0.641 | 0.629 | 0.279 / 0.577 |
+| 3 | 0.733 | 0.624 | |
+| 4 | 0.700 | 0.630 | |
+
+The margin flips in round 2 and reaches +0.11 in round 3 against the required +0.10; a lone grudge among
+five bails only climbs from 0.02 to 0.24, so the invasion threshold is two seats, as predicted. Under the
+full `series` preset the crown already lifts two grudges above four bails in round 0 (0.815 vs 0.685), so the
+ledger's own effect is only visible on the legacy rules, and 5 grudge + 1 bail keeps the bail at 0.60 to 0.62.
+
+Open: the trained agents need retraining under the package (run `rl/checkpoints/v9` with the movement
+anchor and the health checker), and the clover shrink was not built.
+
