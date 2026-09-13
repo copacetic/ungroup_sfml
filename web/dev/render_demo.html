@@ -1,0 +1,102 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Ungroup render demo</title>
+<style>
+  @font-face { font-family: 'monogram'; src: url('../assets/monogram.ttf') format('truetype'); }
+  html, body { margin: 0; height: 100%; background: rgb(34,32,52); overflow: hidden; font-family: monogram, monospace; }
+  #c { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; }
+  #bar { position: fixed; left: 8px; bottom: 6px; color: #cfd; font-size: 14px; font-family: monospace; opacity: 0.8; pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="bar"></div>
+<script type="module">
+import { createRenderer } from '../src/render.js';
+
+// query: ?t=20 (start seconds) &paused=1 &me=0 (-1 = spectator) &mode=canvas2d &replay=sample_replay.json &bodies=20 (synthetic stress frame)
+const q = new URLSearchParams(location.hash.slice(1) || location.search.slice(1));
+const canvas = document.getElementById('c');
+const bar = document.getElementById('bar');
+const R = createRenderer(canvas, {
+  fontUrl: '../assets/monogram.ttf',
+  dottedBackgroundUrl: '../assets/dotted_background.png',
+  minePatternUrl: '../assets/mine_pattern.png',
+  sparkUrl: '../assets/spark.png',
+  letterUrls: ['../assets/a_letter.png', '../assets/m_letter.png', '../assets/e_letter.png', '../assets/n_letter.png'],
+}, { mode: q.get('mode') || undefined });
+
+const replay = await (await fetch(q.get('replay') || 'sample_replay.json')).json();
+await R.ready;
+const cfg = replay.config;
+const meta = { ...replay.meta, needs: replay.needs, pads: replay.pads, mine_pos: replay.mine_pos, mine_type: replay.mine_type, winner: replay.winner };
+const frames = replay.frames;
+const names = replay.names;
+const frameEvery = (replay.meta && replay.meta.frame_every) || 3;
+const frameDt = cfg.dt * frameEvery;
+const me = q.has('me') ? parseInt(q.get('me'), 10) : 0;
+
+let playT = parseFloat(q.get('t') || '0');
+let paused = q.get('paused') === '1';
+let speed = 1;
+let last = performance.now();
+let frameIndex = 0;
+
+// synthetic stress frame: `bodies` solo/group bodies spread over the arena
+function stressFrame(n) {
+  const base = frames[Math.min(frames.length - 1, Math.floor(playT / frameDt))];
+  const f = JSON.parse(JSON.stringify(base));
+  f.bodies = [];
+  f.players = [];
+  for (let i = 0; i < n; i++) {
+    const a = i / n * Math.PI * 2, r = 0.15 + 0.6 * ((i * 7) % 5) / 5;
+    const pool = [0, 0, 0, 0]; for (let k = 0; k < 4; k++) pool[k] = (i * 3 + k * 5) % 7;
+    f.bodies.push({ m: [i], x: r * Math.cos(a), y: r * Math.sin(a), vx: 0, vy: 0, stun: 0, pool, head: i });
+    f.players.push({ banked: [0, 0, 0, 0], intent: i % 4, join: i % 3 !== 0, leaving: -1, cd: 0, dir: [Math.cos(a), Math.sin(a)], brand: 0, leaver: false });
+  }
+  f.events = [];
+  return f;
+}
+const stress = q.has('bodies') ? parseInt(q.get('bodies'), 10) : 0;
+const stressMeta = stress ? { ...meta, pads: [], needs: [] } : meta;
+
+function frameAt(t) {
+  const i = Math.max(0, Math.min(frames.length - 1, Math.floor(t / frameDt)));
+  frameIndex = i;
+  return frames[i];
+}
+
+let drawCount = 0, drawSum = 0, drawMax = 0;
+function loop(now) {
+  const dt = Math.min(0.1, (now - last) / 1000);
+  last = now;
+  if (!paused) playT = Math.min(frames.length * frameDt - 0.001, playT + dt * speed);
+  const frame = stress ? stressFrame(stress) : frameAt(playT);
+  const t0 = performance.now();
+  R.draw({ frame, meta: stressMeta, cfg, me, time: now / 1000, names, camera: q.has('zoom') ? { zoom: parseFloat(q.get('zoom')) } : undefined });
+  const ms = performance.now() - t0;
+  drawCount++; drawSum += ms; drawMax = Math.max(drawMax, ms);
+  bar.textContent = `${R.mode}  t=${frame.t.toFixed(1)}s  frame ${frameIndex}/${frames.length}  bodies ${frame.bodies.length}  draw ${ms.toFixed(2)} ms (avg ${(drawSum / drawCount).toFixed(2)}, max ${drawMax.toFixed(2)})  ${paused ? 'PAUSED' : 'x' + speed}  [space pause, ←/→ seek 5 s, +/- speed, r reset]`;
+  requestAnimationFrame(loop);
+}
+addEventListener('resize', () => R.resize());
+addEventListener('keydown', (e) => {
+  if (e.code === 'Space') { paused = !paused; e.preventDefault(); }
+  else if (e.code === 'ArrowRight') playT += 5;
+  else if (e.code === 'ArrowLeft') playT = Math.max(0, playT - 5);
+  else if (e.key === '+' || e.key === '=') speed = Math.min(8, speed * 2);
+  else if (e.key === '-') speed = Math.max(0.25, speed / 2);
+  else if (e.key === 'r') { playT = 0; drawCount = 0; drawSum = 0; drawMax = 0; }
+});
+window.__demo = {
+  seek(t) { playT = t; }, pause(p) { paused = p; }, get t() { return playT; }, R,
+  stats() { return { mode: R.mode, count: drawCount, avg: drawSum / Math.max(1, drawCount), max: drawMax, last: R.stats.frameMs }; },
+  resetStats() { drawCount = 0; drawSum = 0; drawMax = 0; },
+  ready: true,
+};
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
