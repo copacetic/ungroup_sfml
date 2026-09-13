@@ -1033,12 +1033,17 @@ export class Game {
           const amount = this._amount;
           const total = b.poolTotal();
           const mult = 1.0 + cfg.group_bank_bonus * (b.n() - 1);
+          if (cfg.bank_round) {  // whole units bank; the fraction stays in the pool so "6/6" means six
+            let wholeTotal = 0;
+            for (let t = 0; t < TYPES; t++) wholeTotal += Math.floor(b.pool[t] * mult + 0.5);
+            if (wholeTotal < 0.5) break;  // nothing whole to bank yet: no event, no crown churn
+          }
           let fair = true;
           const pi = this.progress(i);
           for (const j of mem) if (this.progress(j) < pi - 1e-9) fair = false;
           for (let t = 0; t < TYPES; t++) {
             amount[t] = b.pool[t] * mult;
-            if (cfg.bank_round) {  // whole units bank; the fraction stays in the pool so "6/6" means six
+            if (cfg.bank_round) {
               const whole = Math.floor(amount[t] + 0.5);
               b.pool[t] = Math.max(0.0, (amount[t] - whole) / mult);
               amount[t] = whole;

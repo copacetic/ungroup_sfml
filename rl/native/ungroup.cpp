@@ -816,11 +816,16 @@ struct Game {
                     double amount[TYPES];
                     double total = b.pool_total();
                     double mult = 1.0 + cfg.group_bank_bonus * (b.n() - 1);
+                    if (cfg.bank_round) {  // whole units bank; the fraction stays in the pool so "6/6" means six
+                        double whole_total = 0;
+                        for (int t = 0; t < TYPES; t++) whole_total += std::floor(b.pool[t] * mult + 0.5);
+                        if (whole_total < 0.5) break;  // nothing whole to bank yet: no event, no crown churn
+                    }
                     bool fair = true;
                     for (int j : b.members) if (progress(j) < progress(i) - 1e-9) fair = false;
                     for (int t = 0; t < TYPES; t++) {
                         amount[t] = b.pool[t] * mult;
-                        if (cfg.bank_round) {  // whole units bank; the fraction stays in the pool so "6/6" means six
+                        if (cfg.bank_round) {
                             double whole = std::floor(amount[t] + 0.5);
                             b.pool[t] = std::max(0.0, (amount[t] - whole) / mult);
                             amount[t] = whole;
