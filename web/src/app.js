@@ -538,7 +538,11 @@ function readName() {
   if (v) { S.name = v; try { localStorage.setItem('ungroup-name', v); } catch (_) { /* ignore */ } }
   return S.name;
 }
-function defaultKind() { return /^https?:$/.test(location.protocol) ? 'rtc' : 'local'; }
+// A host page can pin the transport with <meta name="ungroup-transport" content="local"> (for sandboxes that
+// block WebSocket signalling); otherwise peer-to-peer over http(s), same-browser channels over file:.
+function pinnedKind() { const m = document.querySelector('meta[name="ungroup-transport"]'); return m && m.content === 'local' ? 'local' : null; }
+function rtcAllowed() { return /^https?:$/.test(location.protocol) && !pinnedKind(); }
+function defaultKind() { return rtcAllowed() ? 'rtc' : 'local'; }
 
 async function main() {
   const h = hashParams();
@@ -551,8 +555,8 @@ async function main() {
   const kindNote = () => { $('kindNote').textContent = $('kind').value === 'rtc' ? 'share the link with anyone; peers connect directly (no server)' : 'the link only works in other tabs of this browser'; };
   $('kind').addEventListener('change', kindNote);
   $('kind').value = h.has('local') ? 'local' : defaultKind();
-  if (!/^https?:$/.test(location.protocol)) { $('kind').value = 'local'; $('kind').querySelector('[value=rtc]').disabled = true; }
-  $('joinLocal').checked = h.has('local') || !/^https?:$/.test(location.protocol);
+  if (!rtcAllowed()) { $('kind').value = 'local'; $('kind').querySelector('[value=rtc]').disabled = true; }
+  $('joinLocal').checked = h.has('local') || !rtcAllowed();
   kindNote();
   if (h.get('seed')) $('seed').value = h.get('seed');
   bindInput();
