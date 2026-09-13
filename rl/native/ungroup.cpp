@@ -102,8 +102,10 @@ struct Cfg {
     double ledger_decay = 0.5;     // multiplier applied to the unit ledgers at each persisted reset
     double grudge_window = 500.0;  // seconds a public leave is held against a player by the grudge bot
     int obs_legacy = 0;            // 1 = emit the v2 observation layout (checkpoints trained before the package)
+    double head_steer = 1.0;       // weight of the head's push direction in the group's mean (the crown steers when > 1)
+    int bank_round = 0;            // 1 = banked amounts are whole units (the remainder stays in the pool)
 };
-constexpr int CFG_LEN = 53;
+constexpr int CFG_LEN = 55;
 constexpr double NEVER = -1e9;
 
 void cfg_fill(Cfg& c, const double* a, int len) {
@@ -123,6 +125,7 @@ void cfg_fill(Cfg& c, const double* a, int len) {
     c.brand_min = a[k++]; c.brand_base = a[k++]; c.brand_per_unit = a[k++]; c.brand_max = a[k++];
     c.bloom_rate = a[k++]; c.seed_rate = a[k++]; c.seed_floor = a[k++]; c.seed_range = a[k++]; c.bloom_cap = a[k++];
     c.persist = (int)a[k++]; c.ledger_decay = a[k++]; c.grudge_window = a[k++]; c.obs_legacy = (int)a[k++];
+    c.head_steer = a[k++]; c.bank_round = (int)a[k++];
 }
 
 void cfg_dump(const Cfg& c, double* a) {
@@ -141,6 +144,7 @@ void cfg_dump(const Cfg& c, double* a) {
     a[k++] = c.brand_min; a[k++] = c.brand_base; a[k++] = c.brand_per_unit; a[k++] = c.brand_max;
     a[k++] = c.bloom_rate; a[k++] = c.seed_rate; a[k++] = c.seed_floor; a[k++] = c.seed_range; a[k++] = c.bloom_cap;
     a[k++] = c.persist; a[k++] = c.ledger_decay; a[k++] = c.grudge_window; a[k++] = c.obs_legacy;
+    a[k++] = c.head_steer; a[k++] = c.bank_round;
 }
 
 struct Vec {
@@ -503,9 +507,12 @@ struct Game {
         double a = std::min(1.0, cfg.vel_lerp * cfg.dt);
         for (Body& b : bodies) {
             Vec mean;
-            int pushing = 0;
+            double pushing = 0;
             for (int i : b.members) {
-                if (players[i].dir.norm() > 1e-6) { mean = mean + players[i].dir; pushing++; }
+                if (players[i].dir.norm() > 1e-6) {
+                    double w = (cfg.crown && b.n() > 1 && i == b.head) ? cfg.head_steer : 1.0;  // the crown steers
+                    mean = mean + players[i].dir * w; pushing += w;
+                }
             }
             if (pushing > 0) mean = mean * (1.0 / pushing);
             Vec target = b.stun > 0 ? Vec(0, 0) : mean * (cfg.base_speed / std::sqrt((double)b.n()));
@@ -811,7 +818,15 @@ struct Game {
                     double mult = 1.0 + cfg.group_bank_bonus * (b.n() - 1);
                     bool fair = true;
                     for (int j : b.members) if (progress(j) < progress(i) - 1e-9) fair = false;
-                    for (int t = 0; t < TYPES; t++) { amount[t] = b.pool[t] * mult; players[i].banked[t] += amount[t]; b.pool[t] = 0; }
+                    for (int t = 0; t < TYPES; t++) {
+                        amount[t] = b.pool[t] * mult;
+                        if (cfg.bank_round) {  // whole units bank; the fraction stays in the pool so "6/6" means six
+                            double whole = std::floor(amount[t] + 0.5);
+                            b.pool[t] = std::max(0.0, (amount[t] - whole) / mult);
+                            amount[t] = whole;
+                        } else b.pool[t] = 0;
+                        players[i].banked[t] += amount[t];
+                    }
                     players[i].last_bank_t = t;
                     for (int j : b.members) if (j != i) {
                         banked_while[j][i] += total;

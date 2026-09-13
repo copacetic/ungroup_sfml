@@ -61,8 +61,17 @@ SWEEP = [("base", {}), ("mine_rate x0.8", {"mine_rate": 0.096}), ("mine_rate x1.
          ("spill 0.3", {"spill_min_speed": 0.3})]
 
 
+def apply_sets(cfg, sets):
+    for kv in sets or []:
+        k, v = kv.split("=")
+        f = Config.__dataclass_fields__[k]
+        cfg = cfg.replace(**{k: int(v) if f.type is int else float(v)})
+    return cfg
+
+
 def cmd_eval(a):
     policy, cfg, ck = load_checkpoint(a.checkpoint)
+    cfg = apply_sets(cfg, a.set)
     print(f"checkpoint {a.checkpoint}: {ck.get('samples', 0)} samples, git {ck.get('git')}, config mine_rate={cfg.mine_rate} forfeit={cfg.leave_forfeit}")
     for name, seats in LINEUPS.items():
         r = play(policy, seats, a.games, a.seed, cfg, a.deterministic)
@@ -84,6 +93,7 @@ def cmd_sweep(a):
 
 def cmd_record(a):
     policy, cfg, ck = load_checkpoint(a.checkpoint)
+    cfg = apply_sets(cfg, a.set)
     seats = a.seats.split(",")
     names = [f"Agent {i}" if s == "policy" else f"{s.capitalize()} bot {i}" for i, s in enumerate(seats)]
 
@@ -121,6 +131,7 @@ if __name__ == "__main__":
         p.add_argument("--games", type=int, default=48)
         p.add_argument("--seed", type=int, default=5000)
         p.add_argument("--deterministic", action="store_true")
+        p.add_argument("--set", action="append", help="override a Config field for the evaluation, e.g. --set head_steer=2")
         if name == "record":
             p.add_argument("--seats", default="policy,policy,policy,policy,policy,policy")
             p.add_argument("--tries", type=int, default=4)

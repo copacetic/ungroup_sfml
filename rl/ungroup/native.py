@@ -83,6 +83,8 @@ class Config:
     ledger_decay: float = 0.5
     grudge_window: float = 500.0
     obs_legacy: int = 0
+    head_steer: float = 1.0
+    bank_round: int = 0
 
     def to_array(self):
         return [float(v) for v in asdict(self).values()]
@@ -113,8 +115,8 @@ PRESETS = {
     "legacy": {},
     "crown": dict(crown=1),
     "bloom": dict(bloom_rate=0.1, seed_rate=0.15, seed_floor=0.05, bloom_cap=8.0),
-    "life": dict(crown=1, brand=1, bloom_rate=0.1, seed_rate=0.15, seed_floor=0.05, bloom_cap=8.0),
-    "series": dict(crown=1, brand=1, bloom_rate=0.1, seed_rate=0.15, seed_floor=0.05, bloom_cap=8.0, persist=1),
+    "life": dict(crown=1, brand=1, bloom_rate=0.1, seed_rate=0.15, seed_floor=0.05, bloom_cap=8.0, bank_round=1),
+    "series": dict(crown=1, brand=1, bloom_rate=0.1, seed_rate=0.15, seed_floor=0.05, bloom_cap=8.0, bank_round=1, persist=1),
 }
 
 
