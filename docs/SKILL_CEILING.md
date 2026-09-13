@@ -392,6 +392,18 @@ kidnapper scores 0.695 with 41 percent of the wins because it arrives poor, is c
 banks at its pad. The crown rescues the poorest member without asking why they are poor; a dragging
 member should not be crownable, which is a rule to add before humans meet it.
 
-Open: the clover shrink was not built, and the agents are at parity with the scripted bots on the new rules
-rather than ahead of them.
+Macro actions (13 September, later). The trainer gained a target-based movement head: an agent picks a mine,
+its own pad, the head's pad or one of the four nearest bodies every half second and the core steers toward it,
+the change section 3 and the follow-up analysis singled out as the likely way past the bots. The warm start
+clones both the bail and loyal experts through the same vocabulary. The v10 run on the life preset produced,
+at update 100 (2.6 M samples, `rl/models/v10_100.pt`, 32 paired rounds): 0.789 vs 0.673 against bail (wins 27
+percent of seats to bail's 6), 0.722 vs 0.571 against solo, 0.745 vs 0.758 against loyal (more seat wins than
+loyal), 0.633 vs 0.173 against the kidnapper, 0.704 vs 0.281 against the rammer, self-play 0.725 with 49-second
+alliances, 19 over ten seconds per round, 31 percent of rounds finishing early and 8.5 spills. That is the first
+agent clearly above the training bots and level with the strongest one. The same run then drifted like every
+earlier one (alliances 49 s at update 100, 9 s at 200, 5 s at 300; the leave head rose from 0.04 to 0.20), so
+the checker's early-stopping role stands: the deliverable is the peak snapshot, not the last one.
+
+Open: the clover shrink was not built; the drift after the peak is still unexplained (the anchor covers the
+movement head only; the leave head is where v10 moved).
 

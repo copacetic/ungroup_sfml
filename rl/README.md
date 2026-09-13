@@ -115,3 +115,8 @@ single fields, and `rl/series.py` plays consecutive rounds with the same seats. 
 loyal but refuses anyone who publicly left a partner in the last 500 s. The observation gains two features
 (is-head, brand) per own block and per other slot; checkpoints trained before the package load with
 `obs_legacy=1` and keep their layout, so `rl/models/v8_300.pt` still runs, blind to the new state.
+
+Macro agents: `python3 rl/train_v2.py --preset life --macro --warmup-bots bail,loyal --anchor-kl 0.1 ...` trains a
+policy whose movement head picks targets (mine, own pad, head's pad, nearest bodies) at 0.5 s; `rl/models/v10_100.pt`
+is the first agent clearly above the scripted bots (see docs/SKILL_CEILING.md, implementation status).
+`rl/play_console.py` lets a person play a seat from a terminal one decision at a time.
