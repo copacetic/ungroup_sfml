@@ -1010,7 +1010,10 @@ export function createRenderer(canvas, assets = {}, options = {}) {
         const pr = padR * scale * pix;
         const l = label('home', '#ffffff', lpx, false);
         if (px + pr > 0 && px - pr < W && py + pr > 0 && py - pr < H) {
-          B.screenSprite(l.name, Math.round(px - l.w / 2), Math.round(py - l.h / 2), l.w, l.h, 0, 0, 1, 1, [1, 1, 1, 0.9]);
+          // keep the tag out of the resource counters in the top-right corner: drop it below the pad there
+          const inHud = px > W - 330 * dpr && py < 250 * dpr;
+          const ty = inHud ? py + pr + l.h : py;
+          B.screenSprite(l.name, Math.round(px - l.w / 2), Math.round(ty - l.h / 2), l.w, l.h, 0, 0, 1, 1, [1, 1, 1, 0.9]);
         } else {
           const e = label('> home', '#ffffff', lpx, true);
           const pad = 8 * dpr;
