@@ -40,3 +40,27 @@ Life preset: crown (head_vest 10), brand, bloom (K = players + 2), whole-unit ba
 six loyal 0.747, six bail 0.699, six solo 0.632; five bail + one loyal 0.732 vs 0.674; kidnap 0.113 and
 rammer winless. The macro-action agent v10 update 100 is evaluated under the same rules in
 docs/SKILL_CEILING.md.
+
+## Second session (13 September, later): against the trained agents
+
+Rounds three and four put my seat next to two v10 agents plus bots (`rl/play_console.py --seats me,agent,agent,...`).
+
+- **The agents are hit-and-run partners.** Both joined me readily, mined at pair speed, and left within ten
+  seconds of the crown passing to me or of the pool reaching four or five units, taking 1.4 to 4.4 units.
+  One got branded for it. They also did it to each other: agent 1 left agent 2 with 4.4 units at 57 s.
+  Against a human this reads as opportunism, and the brand plus the grudge bot are the right answer to it;
+  a human can also simply stop opening the door to a public leaver, which the panel now shows.
+- **The rammer shadows laden bodies** at a tenth of a unit and can only spill you when you stop. Keeping
+  moving toward the pad worked every time. That is a fair mechanic once you know it, so it is in the rules
+  page.
+- **I over-mined my cheap colour twice** (banked 12 and 15 of a 6-unit need) because the group's mining
+  target is not mine to choose and the pool banks as a whole. The pool composition is visible in the cells,
+  so this is a skill to learn rather than a rule to change, but the HUD could warn when a colour in the
+  pool is already complete for the crowned member.
+- **Bug found and fixed:** with whole-unit banking, a pool left with fractions kept firing zero-unit bank
+  events every tick while a body sat on its pad, inflating bank counts and re-crowning constantly. Both
+  the C++ core and the JS port now bank only when at least one whole unit is available.
+
+The browser build was also played by a scripted "human" through the real page (`web/test/playtest.mjs`),
+which drives the keyboard from a simple plan and screenshots every twenty seconds; it found the same
+zero-unit bank feed lines before the fix and nothing else visibly wrong.
