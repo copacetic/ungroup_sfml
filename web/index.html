@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ungroup</title>
+<link rel="stylesheet" href="src/ui.css">
+<link rel="icon" href="data:,">
+</head>
+<body>
+
+<!-- ============================================================ home -->
+<section id="home" class="screen active">
+  <div class="inner">
+    <h1>UNGROUP</h1>
+    <div class="tagline">merge, mine, bank, betray. a browser port of the ungroup arena.</div>
+    <div class="row" style="margin-bottom:12px">
+      <label>your name <input id="name" type="text" maxlength="24" placeholder="name"></label>
+    </div>
+    <div class="cards">
+      <div class="card" id="createCard">
+        <h2>Create a room</h2>
+        <div class="row">
+          <label>human seats <input id="humans" type="number" min="1" max="8" value="1"></label>
+          <label>agent seats <input id="agents" type="number" min="0" max="8" value="0" disabled></label>
+          <span id="agentNote" class="small dim">checking for a model...</span>
+        </div>
+        <h3>bots</h3>
+        <div class="bots">
+          <label>solo <input class="bot" data-bot="solo" type="number" min="0" max="8" value="1"></label>
+          <label>bail <input class="bot" data-bot="bail" type="number" min="0" max="8" value="2"></label>
+          <label>loyal <input class="bot" data-bot="loyal" type="number" min="0" max="8" value="2"></label>
+          <label>kidnap <input class="bot" data-bot="kidnap" type="number" min="0" max="8" value="0"></label>
+          <label>rammer <input class="bot" data-bot="rammer" type="number" min="0" max="8" value="1"></label>
+          <label>grudge <input class="bot" data-bot="grudge" type="number" min="0" max="8" value="0"></label>
+        </div>
+        <div class="row">
+          <label>preset <select id="preset"></select></label>
+          <label>seed <input id="seed" type="number" min="0" placeholder="random"></label>
+        </div>
+        <div class="row">
+          <label>round length <input id="timeLimit" type="number" min="30" max="900" step="10" value="240"> s</label>
+          <label>rounds <input id="rounds" type="number" min="0" max="99" value="0" title="0 = endless"> <span class="small dim">(0 = endless)</span></label>
+        </div>
+        <div class="row">
+          <label>network <select id="kind"><option value="rtc">peer to peer (rtc)</option><option value="local">this browser only (local)</option></select></label>
+          <span id="kindNote" class="small dim"></span>
+        </div>
+        <div class="actions">
+          <button id="create" class="primary">Create room</button>
+          <button id="watch" title="a bots-only game, no network">Watch bots</button>
+        </div>
+        <div class="help" style="margin-top:6px">Create room opens a lobby with a share link; Watch bots starts a bots-only game right away, no network needed.</div>
+        <div id="createErr" class="small" style="color:var(--D)"></div>
+      </div>
+      <div class="card" id="joinCard">
+        <h2>Join a room</h2>
+        <div class="row">
+          <label>code <input id="joinCode" type="text" maxlength="16" placeholder="ABC123"></label>
+          <label><input id="joinLocal" type="checkbox"> same browser (local)</label>
+        </div>
+        <div class="actions"><button id="join" class="primary">Join</button></div>
+        <div class="help">
+          Paste a room code, or open the link the host shared (index.html#r=CODE).
+        </div>
+        <h3>how to play</h3>
+        <div class="help">
+          <kbd>WASD</kbd>/<kbd>arrows</kbd> or hold the mouse to steer. <kbd>J</kbd>/<kbd>space</kbd> toggles joinable
+          (touching joinable bodies merge into one group with a shared pool). Mines fill the pool; touching a
+          member's home pad banks it to them. Hold <kbd>L</kbd> to leave a group with a share of the pool.
+          <kbd>1</kbd>-<kbd>4</kbd> declare which resource you are after. First to fill all four needs wins.
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ lobby -->
+<section id="lobby" class="screen">
+  <div class="inner">
+    <h1>LOBBY</h1>
+    <div class="row">room <b id="roomCode">-</b> <span id="lobbyKind" class="dim small"></span></div>
+    <div class="row" style="margin:8px 0">
+      <input id="link" type="text" readonly>
+      <button id="copy">Copy link</button>
+      <span id="copied" class="small dim"></span>
+    </div>
+    <div id="linkHelp" class="help" style="margin-top:0"></div>
+    <div id="lobbySettings" class="dim small"></div>
+    <h3>seats</h3>
+    <ul id="seats"></ul>
+    <div id="spectators" class="dim small"></div>
+    <div id="notice"></div>
+    <div id="startHelp" class="help" style="margin-top:4px"></div>
+    <div class="actions">
+      <button id="start" class="primary hidden">Start</button>
+      <button id="leaveLobby" class="danger">Leave</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ game -->
+<section id="game" class="screen">
+  <div id="stage">
+    <canvas id="c"></canvas>
+    <div id="toasts"></div>
+    <div id="status" class="hidden"></div>
+    <div id="end" class="overlay hidden">
+      <div class="box">
+        <h2 id="endTitle">round over</h2>
+        <div id="endSub" class="dim"></div>
+        <div id="endMe"></div>
+        <table id="endtab"></table>
+        <div id="countdown"></div>
+        <div class="actions"><button id="endLeave" class="danger">Leave</button></div>
+      </div>
+    </div>
+    <div id="hostLeft" class="overlay hidden">
+      <div class="box">
+        <h2>host left</h2>
+        <div class="dim">the room is gone.</div>
+        <div class="actions"><button id="hostLeftHome" class="primary">Back home</button></div>
+      </div>
+    </div>
+  </div>
+  <aside id="panel">
+    <div class="sec">
+      <div id="ptitle">-</div>
+      <div id="pinfo" class="small dim">-</div>
+    </div>
+    <div class="sec" id="ctrlSec">
+      <div id="ctrl">
+        <button id="bJoin" class="play" title="J / space: let touching bodies merge with you">join: off</button>
+        <button id="bLeave" class="play" title="hold L to leave your group with a share of the pool">leave (hold)</button>
+        <button class="int play i0" data-intent="1" title="1: declare you are after the blue resource">1</button>
+        <button class="int play i1" data-intent="2" title="2: declare you are after the yellow resource">2</button>
+        <button class="int play i2" data-intent="3" title="3: declare you are after the orange resource">3</button>
+        <button class="int play i3" data-intent="4" title="4: declare you are after the red resource">4</button>
+        <button id="bCam" title="C: whole arena / follow me">arena view</button>
+        <button id="bQuit" class="danger">quit</button>
+      </div>
+      <div id="keys"><kbd>WASD</kbd> move &middot; hold <kbd>mouse</kbd> to steer &middot; <kbd>J</kbd> join &middot; hold <kbd>L</kbd> leave &middot; <kbd>1-4</kbd> intent (colour) &middot; <kbd>C</kbd> camera</div>
+    </div>
+    <div id="pbody">
+      <div class="sec">
+        <h3>players</h3>
+        <ul id="players"></ul>
+      </div>
+      <div class="sec">
+        <h3>alliances</h3>
+        <ul id="alliances"><li class="dim">none</li></ul>
+      </div>
+      <div class="sec grow">
+        <h3>events</h3>
+        <ul id="feed"></ul>
+      </div>
+    </div>
+  </aside>
+</section>
+
+<div id="conn"></div>
+
+<script type="module" src="src/app.js"></script>
+<script>
+// Chromium refuses to load ES modules from file:// (origin "null"); explain instead of showing a dead page.
+setTimeout(function () {
+  if (window.__app) return;
+  var el = document.getElementById('conn');
+  el.className = 'err';
+  el.style.pointerEvents = 'auto';
+  el.textContent = location.protocol === 'file:'
+    ? 'this browser does not run the app from file:// - serve the folder over http (python3 -m http.server) or use Firefox'
+    : 'the app failed to load (see the console)';
+}, 2500);
+</script>
+</body>
+</html>

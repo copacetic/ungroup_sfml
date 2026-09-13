@@ -42,7 +42,8 @@
 export const PALETTE = [[159, 224, 246], [243, 229, 154], [243, 181, 155], [243, 156, 156]];
 export const PALETTE_CSS = PALETTE.map(c => `rgb(${c[0]},${c[1]},${c[2]})`);
 export const BACKGROUND_COLOR = [34, 32, 52];
-export const OUT_OF_BOUNDS_COLOR = [120, 120, 120];
+export const OUT_OF_BOUNDS_COLOR = [120, 120, 120];   // the original's grey
+export const OUT_OF_BOUNDS_SOFT = [62, 60, 80];         // default here: the whole arena is usually in view
 export const GOLD = [255, 208, 80];
 export const WORLD_PX = 450;        // css px per world unit at zoom 1 (unit disc = 900 css px across)
 export const PIXEL_SCALE = 2;       // css px per world buffer pixel
@@ -232,7 +233,7 @@ void main() {
     vec4 col = voronoi(st);
     if (u_mode == 2) {
       vec4 t = texture(u_tex, st);
-      col.rgb *= mix(vec3(1.0), t.rgb, 0.55);
+      col.rgb *= mix(vec3(1.0), t.rgb, 0.7);
     }
     o = col;
     return;
@@ -428,6 +429,7 @@ function makeGL(canvas) {
   };
 
   B.background = (p) => {
+    const oob = p.oob;
     const P = B.bg;
     gl.useProgram(P.p); B._prog = P;
     gl.uniform2f(P.u.u_buf, B.bufW, B.bufH);
@@ -435,7 +437,7 @@ function makeGL(canvas) {
     gl.uniform1f(P.u.u_scale, p.scale);
     gl.uniform1f(P.u.u_R, p.R);
     gl.uniform3f(P.u.u_bg, BACKGROUND_COLOR[0] / 255, BACKGROUND_COLOR[1] / 255, BACKGROUND_COLOR[2] / 255);
-    gl.uniform3f(P.u.u_oob, OUT_OF_BOUNDS_COLOR[0] / 255, OUT_OF_BOUNDS_COLOR[1] / 255, OUT_OF_BOUNDS_COLOR[2] / 255);
+    gl.uniform3f(P.u.u_oob, oob[0] / 255, oob[1] / 255, oob[2] / 255);
     gl.uniform2i(P.u.u_dotSize, p.dotW, p.dotH);
     gl.uniform2i(P.u.u_off1, p.off1x, p.off1y);
     gl.uniform2i(P.u.u_off2, p.off2x, p.off2y);
@@ -523,6 +525,7 @@ function makeGL(canvas) {
     if (!B.tex.hud) return;
     B._sprite(B.tex.hud, 0, 0, hudCanvas.width, hudCanvas.height, 0, 0, 1, 1, [1, 1, 1, 1], canvas.width, canvas.height);
   };
+  B.finish = () => gl.finish();
   B.destroy = () => { const ext = gl.getExtension('WEBGL_lose_context'); if (ext) ext.loseContext(); };
   return B;
 }
@@ -560,12 +563,12 @@ function make2D(canvas) {
     return c;
   };
   B.background = (p) => {
-    octx.fillStyle = css(OUT_OF_BOUNDS_COLOR);
+    octx.fillStyle = css(p.oob);
     octx.fillRect(0, 0, bufW, bufH);
     octx.fillStyle = css(BACKGROUND_COLOR);
     octx.beginPath(); octx.arc(p.ox, p.oy, p.scale, 0, Math.PI * 2); octx.fill();
     if (p.R < 0.9999) {
-      octx.fillStyle = css(OUT_OF_BOUNDS_COLOR, 0.18);
+      octx.fillStyle = css(p.oob, 0.18);
       octx.beginPath(); octx.arc(p.ox, p.oy, p.scale, 0, Math.PI * 2); octx.arc(p.ox, p.oy, p.R * p.scale, 0, Math.PI * 2, true); octx.fill();
       octx.strokeStyle = 'rgba(204,204,224,0.55)'; octx.lineWidth = 1.5;
       octx.beginPath(); octx.arc(p.ox, p.oy, p.R * p.scale, 0, Math.PI * 2); octx.stroke();
@@ -662,6 +665,7 @@ function make2D(canvas) {
     ctx.globalAlpha = 1;
   };
   B.hud = (hudCanvas) => { ctx.imageSmoothingEnabled = false; ctx.drawImage(hudCanvas, 0, 0); };
+  B.finish = () => {};
   B.destroy = () => {};
   return B;
 }
@@ -671,7 +675,7 @@ function make2D(canvas) {
 // ---------------------------------------------------------------------------------------------------
 
 export function createRenderer(canvas, assets = {}, options = {}) {
-  const opt = { worldPx: WORLD_PX, pixelScale: PIXEL_SCALE, chase: CAMERA_CHASE, hud: true, ...options };
+  const opt = { worldPx: WORLD_PX, pixelScale: PIXEL_SCALE, chase: CAMERA_CHASE, hud: true, outOfBounds: OUT_OF_BOUNDS_SOFT, ...options };
   let B = null;
   if (opt.mode !== 'canvas2d') { try { B = makeGL(canvas); } catch (e) { console.warn('render: WebGL2 failed, using 2D', e); B = null; } }
   if (!B) B = make2D(canvas);
@@ -725,7 +729,7 @@ export function createRenderer(canvas, assets = {}, options = {}) {
     const t0 = performance.now();
     const { frame, meta } = args;
     if (!frame) return;
-    if (!state.cssW || canvas.width !== Math.round(state.cssW * state.dpr)) resize();
+    if (!state.cssW || canvas.clientWidth !== state.cssW || canvas.clientHeight !== state.cssH || canvas.width !== Math.round(state.cssW * state.dpr)) resize();
     const cfg = args.cfg ? (Array.isArray(args.cfg) ? cfgFromArray(args.cfg) : args.cfg)
       : (meta && meta.cfg ? cfgFromArray(meta.cfg) : CFG_DEFAULTS);
     const me = (args.me == null) ? -1 : args.me;
@@ -773,7 +777,7 @@ export function createRenderer(canvas, assets = {}, options = {}) {
     B.begin(bufW, bufH);
     const camPx = cam.x * scale, camPy = cam.y * scale;
     B.background({
-      ox, oy, scale, R,
+      ox, oy, scale, R, oob: opt.outOfBounds,
       dotW: state.dots ? state.dots.width : 200, dotH: state.dots ? state.dots.height : 200,
       off1x: Math.round(camPx / 10), off1y: Math.round(camPy / 10),
       off2x: Math.round(camPx / 5), off2y: Math.round(camPy / 5),
@@ -839,9 +843,12 @@ export function createRenderer(canvas, assets = {}, options = {}) {
       const total = counts[0] + counts[1] + counts[2] + counts[3];
       let joinable = n > 0;
       for (const i of b.m) { const p = players[i]; if (!p || !p.join) joinable = false; }
+      // joinable: the original's 1 px white outline; the local player's own body additionally gets a faint
+      // ring when it is not joinable so an empty body stays findable on the dark arena
+      const mine = me >= 0 && b.m.indexOf(me) >= 0;
       B.drawCircle({
         x: cx, y: cy, r, mode: 1, cells: total, counts, time,
-        ring: [1, 1, 1, 1], ringIn: joinable ? r + unit : 0, ringOut: joinable ? r + 2 * unit : 0,
+        ring: joinable ? [1, 1, 1, 1] : [1, 1, 1, 0.28], ringIn: joinable || mine ? r + unit : 0, ringOut: joinable || mine ? r + 2 * unit : 0,
       });
       bodyOf.push({ b, cx, cy, r, n });
     }
@@ -883,10 +890,13 @@ export function createRenderer(canvas, assets = {}, options = {}) {
     }
     B.flushShapes(batch);
 
-    // ---- sparks (stun / spill) ----
+    // ---- sparks (stun / spill), timed in game seconds (frame.t) ----
     const sparks = state.sparks;
+    const gt = frame.t || 0;
+    if (state.lastGameT != null && (gt < state.lastGameT - 0.5 || gt > state.lastGameT + 5)) { sparks.length = 0; state.stunSeen.clear(); }
+    state.lastGameT = gt;
     for (const e of frame.events || []) {
-      if (e.kind === 'spill' && e.x != null) sparks.push({ x: e.x, y: e.y, t0: time, key: 'ev' + e.t });
+      if (e.kind === 'spill' && e.x != null && !sparks.some(s => s.ev === e.t + ':' + e.x + ':' + e.y)) sparks.push({ x: e.x, y: e.y, t0: e.t != null ? e.t : gt, ev: e.t + ':' + e.x + ':' + e.y });
     }
     const seen = new Set();
     for (const b of frame.bodies) {
@@ -895,8 +905,8 @@ export function createRenderer(canvas, assets = {}, options = {}) {
       const prev = state.stunSeen.get(key) || 0;
       if (b.stun > 0 && prev <= 0) {
         // a spill event at the same tick already made a spark near this body
-        const near = sparks.some(s => time - s.t0 < 0.05 && Math.hypot(s.x - b.x, s.y - b.y) < 0.2);
-        if (!near) sparks.push({ x: b.x, y: b.y, t0: time });
+        const near = sparks.some(s => gt - s.t0 < 0.2 && Math.hypot(s.x - b.x, s.y - b.y) < 0.2);
+        if (!near) sparks.push({ x: b.x, y: b.y, t0: gt });
       }
       state.stunSeen.set(key, b.stun);
     }
@@ -904,7 +914,7 @@ export function createRenderer(canvas, assets = {}, options = {}) {
     const SPARK_DUR = 0.24, SPARK_FRAMES = 6;
     for (let s = sparks.length - 1; s >= 0; s--) {
       const sp = sparks[s];
-      const age = time - sp.t0;
+      const age = gt - sp.t0;
       if (age < 0 || age >= SPARK_DUR) { sparks.splice(s, 1); continue; }
       const f = Math.min(SPARK_FRAMES - 1, Math.floor(age / SPARK_DUR * SPARK_FRAMES));
       const size = 48 * unit;
@@ -934,7 +944,7 @@ export function createRenderer(canvas, assets = {}, options = {}) {
     const left = Math.max(0, Math.ceil(timeLimit - frame.t));
     const name = me >= 0 ? (names[me] || ('player ' + me)) : 'spectator';
     const key = [W, H, name, left, banked ? banked.map(v => Math.floor(v)).join(',') : '-', needs ? needs.join(',') : '-',
-      frame.R, state.fontReady, letters.map(l => !!l).join('')].join('|');
+      state.fontReady, letters.map(l => !!l).join('')].join('|');
     const dirty = key !== state.hudKey;
     if (dirty) {
       state.hudKey = key;
@@ -980,6 +990,37 @@ export function createRenderer(canvas, assets = {}, options = {}) {
     }
     B.hud(hudCanvas, dirty);
 
+    // the local player's name under their body (an empty body is nearly invisible) and a 'home' tag on their
+    // pad; when the pad is off screen the tag sticks to the screen edge in its direction
+    if (me >= 0 && frame.players[me]) {
+      const { X, Y, pix, scale } = ctx;
+      const lpx = Math.round(16 * dpr) * 2;
+      if (myBody) {
+        const r = (cfg.solo_radius || 0.045) * Math.sqrt(myBody.m.length) * scale * pix;
+        const sx = X(myBody.x) * pix, sy = Y(myBody.y) * pix;
+        const l = label(name, '#ffffff', lpx, true);
+        B.screenSprite(l.name, Math.round(sx - l.w / 2), Math.round(sy + r + 6 * dpr), l.w, l.h, 0, 0, 1, 1, [1, 1, 1, 0.92]);
+      }
+      if (meta && meta.pads && meta.pads[me] != null) {
+        const padR = (cfg.pad_radius || 0.06);
+        const R = frame.R != null ? frame.R : 1;
+        const padRing = Math.max(R - padR - 0.02, 0.1);
+        const a = meta.pads[me];
+        const px = X(padRing * Math.cos(a)) * pix, py = Y(padRing * Math.sin(a)) * pix;
+        const pr = padR * scale * pix;
+        const l = label('home', '#ffffff', lpx, false);
+        if (px + pr > 0 && px - pr < W && py + pr > 0 && py - pr < H) {
+          B.screenSprite(l.name, Math.round(px - l.w / 2), Math.round(py - l.h / 2), l.w, l.h, 0, 0, 1, 1, [1, 1, 1, 0.9]);
+        } else {
+          const e = label('> home', '#ffffff', lpx, true);
+          const pad = 8 * dpr;
+          const cx = Math.min(W - pad - e.w / 2, Math.max(pad + e.w / 2, px));
+          const cy = Math.min(H - pad - e.h / 2, Math.max(pad + e.h / 2, py));
+          B.screenSprite(e.name, Math.round(cx - e.w / 2), Math.round(cy - e.h / 2), e.w, e.h, 0, 0, 1, 1, [1, 1, 1, 0.9]);
+        }
+      }
+    }
+
     // off-screen mines of the local player's intent type: letter at the screen edge (original behaviour)
     if (me >= 0 && meta && meta.mine_pos && frame.players[me]) {
       const intent = (frame.players[me].intent | 0) & 3;
@@ -996,6 +1037,31 @@ export function createRenderer(canvas, assets = {}, options = {}) {
         B.screenSprite('letter' + intent, cx - L / 2, cy - L / 2, L, L, 0, 0, 1, 1, rgba(PALETTE[intent], 0.9));
       }
     }
+  }
+
+  // small text labels as textures (name under the local body, 'home' on the pad); re-rendered when the font arrives
+  const labelCache = {};
+  let labelSeq = 0;
+  function label(text, color, px, boxed) {
+    const key = [text, color, px, boxed, state.fontReady].join('|');
+    let l = labelCache[key];
+    if (l) return l;
+    const c = document.createElement('canvas');
+    const cx = c.getContext('2d');
+    const font = `${px}px monogram, "Courier New", monospace`;
+    cx.font = font;
+    const tw = Math.ceil(cx.measureText(text).width);
+    const w = tw + 8, h = Math.ceil(px * 1.05) + 2;
+    c.width = w; c.height = h;
+    cx.font = font; cx.textBaseline = 'middle'; cx.textAlign = 'left';
+    cx.imageSmoothingEnabled = false;
+    if (boxed) { cx.fillStyle = 'rgba(34,32,52,0.75)'; cx.fillRect(0, 0, w, h); }
+    cx.fillStyle = color;
+    cx.fillText(text, 4, h / 2);
+    l = { canvas: c, name: 'label' + (labelSeq++), w, h };
+    B.texture(l.name, c, true);
+    labelCache[key] = l;
+    return l;
   }
 
   const tintedLetters = {};
@@ -1027,6 +1093,7 @@ export function createRenderer(canvas, assets = {}, options = {}) {
     stats: state.stats,
     camera: state.cam,
     hudCanvas,
+    finish() { B.finish(); },   // gl.finish(): wait for the GPU (benchmarks)
     destroy() { B.destroy(); },
   };
   return renderer;

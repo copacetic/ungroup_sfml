@@ -14,13 +14,69 @@
 // - The arena shrinks after shrink_start; mines outside it die; pads slide inward.
 // - A player wins by banking its full need vector; at the time limit the highest progress wins.
 //
-// Numerics: all arithmetic is IEEE double exactly as in the C++ (built with -std=c++17, so no FMA
-// contraction); Math.sqrt is correctly rounded like std::sqrt. Math.sin/cos/atan2/pow may differ
-// from glibc by one ulp on rare inputs, so long trajectories are not guaranteed bit-identical to
-// the C++ core, but reset() (needs, pads, intents, mine layout) reproduces the C++ draws exactly
-// through rng.js, and every rule is otherwise a literal transcription.
+// Numerics: all arithmetic is IEEE double in the same operation order as the C++ (a build with
+// -ffp-contract=off; the shipped .so uses FMA through -march=native, which nothing else can reproduce).
+// Math.sqrt is correctly rounded like std::sqrt. V8's Math.sin/cos are NOT correctly rounded (about 3%
+// of inputs differ from glibc by one ulp) and Math.hypot is not sqrt(x*x + y*y), so the core uses the
+// correctly rounded crSin/crCos below (double-double evaluation) and explicit sqrt norms; with them a
+// whole round is bit-identical to the no-FMA C++ build except when glibc itself is not correctly
+// rounded (about 0.1% of inputs). Math.atan2 only picks a compass sector and Math.pow(n, 2.0) is exact.
 
 import { RNG, roundHalfEven } from './rng.js';
+
+// ---- correctly rounded sin/cos (glibc's are; V8's are not). Double-double arithmetic with error-free
+// transforms, Cody-Waite reduction by pi/2 (three-part constant, exact for |k| < 2^26) and Taylor series
+// on |r| <= pi/4 to ~100 bits, then rounded once. About 2.5 us per call; the core calls it at reset,
+// at spills and at ejections only (pad trig is cached per round).
+const SPLIT = 134217729;  // 2^27 + 1
+let _e = 0;               // error term of the last error-free transform
+function twoSum(a, b) { const s = a + b; const bb = s - a; _e = (a - (s - bb)) + (b - bb); return s; }
+function quickTwoSum(a, b) { const s = a + b; _e = b - (s - a); return s; }
+function twoProd(a, b) {
+  const p = a * b;
+  const ta = SPLIT * a, ah = ta - (ta - a), al = a - ah;
+  const tb = SPLIT * b, bh = tb - (tb - b), bl = b - bh;
+  _e = ((ah * bh - p) + ah * bl + al * bh) + al * bl;
+  return p;
+}
+function ddAdd(ah, al, bh, bl, out) { const s = twoSum(ah, bh); let e = _e; const t = twoSum(al, bl); const f = _e; e += t; const s2 = quickTwoSum(s, e); e = _e + f; out[0] = quickTwoSum(s2, e); out[1] = _e; }
+function ddMul(ah, al, bh, bl, out) { const p = twoProd(ah, bh); const e = _e + (ah * bl + al * bh); out[0] = quickTwoSum(p, e); out[1] = _e; }
+function ddDivInt(ah, al, b, out) { const q1 = ah / b; const p = twoProd(q1, b); const r = ((ah - p) - _e + al) / b; out[0] = quickTwoSum(q1, r); out[1] = _e; }
+const PIO2_1 = 1.5707963267948966, PIO2_2 = 6.123233995736766e-17, PIO2_3 = -1.4973849048591698e-33;  // pi/2 = P1 + P2 + P3
+const _r2 = new Float64Array(2), _ts = new Float64Array(2), _tc = new Float64Array(2), _sn = new Float64Array(2), _cs = new Float64Array(2), _rr = new Float64Array(2);
+function _sincos(x) {  // writes sin x to _sn[0], cos x to _cs[0]
+  const k = Math.round(x / PIO2_1);
+  let rh = x, rl = 0;
+  if (k !== 0) {
+    const p = twoProd(k, PIO2_1); const pe = _e;
+    rh = twoSum(x, -p); rl = _e;
+    ddAdd(rh, rl, -pe, 0, _rr); rh = _rr[0]; rl = _rr[1];
+    const q = twoProd(k, PIO2_2); const qe = _e;
+    ddAdd(rh, rl, -q, -qe, _rr); rh = _rr[0]; rl = _rr[1];
+    ddAdd(rh, rl, -k * PIO2_3, 0, _rr); rh = _rr[0]; rl = _rr[1];
+  }
+  ddMul(rh, rl, rh, rl, _r2);
+  let sh = rh, sl = rl, ch = 1, cl = 0;
+  _ts[0] = rh; _ts[1] = rl; _tc[0] = 1; _tc[1] = 0;
+  for (let i = 1; i <= 24; i++) {
+    ddMul(_ts[0], _ts[1], _r2[0], _r2[1], _ts); ddDivInt(-_ts[0], -_ts[1], (2 * i) * (2 * i + 1), _ts);
+    ddMul(_tc[0], _tc[1], _r2[0], _r2[1], _tc); ddDivInt(-_tc[0], -_tc[1], (2 * i - 1) * (2 * i), _tc);
+    ddAdd(sh, sl, _ts[0], _ts[1], _sn); sh = _sn[0]; sl = _sn[1];
+    ddAdd(ch, cl, _tc[0], _tc[1], _cs); ch = _cs[0]; cl = _cs[1];
+    if (Math.abs(_tc[0]) < 1e-36) break;
+  }
+  switch (((k % 4) + 4) % 4) {
+    case 0: _sn[0] = sh; _cs[0] = ch; break;
+    case 1: _sn[0] = ch; _cs[0] = -sh; break;
+    case 2: _sn[0] = -sh; _cs[0] = -ch; break;
+    default: _sn[0] = -ch; _cs[0] = sh;
+  }
+}
+export function crSin(x) { if (x === 0 || !Number.isFinite(x)) return Math.sin(x); _sincos(x); return _sn[0]; }
+export function crCos(x) { if (!Number.isFinite(x)) return Math.cos(x); _sincos(x); return _cs[0]; }
+// cos and sin of the eight compass directions 2*pi*(move-1)/8 (apply_actions in the C++)
+const COMPASS_X = new Float64Array(9), COMPASS_Y = new Float64Array(9);
+for (let m = 1; m <= 8; m++) { const a = 2 * Math.PI * (m - 1) / 8; COMPASS_X[m] = crCos(a); COMPASS_Y[m] = crSin(a); }
 
 export const TYPES = 4;
 export const MAX_SLOTS = 8;      // other-player slots in the observation (nearest others)
@@ -83,8 +139,8 @@ export const PRESETS = Object.freeze({
   legacy: {},
   crown: { crown: 1 },
   bloom: { bloom_rate: 0.1, seed_rate: 0.15, seed_floor: 0.05, bloom_cap: 8.0 },
-  life: { crown: 1, brand: 1, bloom_rate: 0.1, seed_rate: 0.15, seed_floor: 0.05, bloom_cap: 8.0, head_steer: 2.0, bank_round: 1 },
-  series: { crown: 1, brand: 1, bloom_rate: 0.1, seed_rate: 0.15, seed_floor: 0.05, bloom_cap: 8.0, head_steer: 2.0, bank_round: 1, persist: 1 },
+  life: { crown: 1, brand: 1, bloom_rate: 0.1, seed_rate: 0.15, seed_floor: 0.05, bloom_cap: 8.0, bank_round: 1 },
+  series: { crown: 1, brand: 1, bloom_rate: 0.1, seed_rate: 0.15, seed_floor: 0.05, bloom_cap: 8.0, bank_round: 1, persist: 1 },
 });
 
 // Config for a named rule set; bloom_cap scales with the lobby (K = n_players + 2) unless overridden.
@@ -125,8 +181,21 @@ export function seatType(nameOrType) {
   return k;
 }
 
-// ---- number formatting matching the C++ frame/meta JSON (printf %.nf)
-const r1 = (x) => Number(x.toFixed(1)), r2 = (x) => Number(x.toFixed(2)), r3 = (x) => Number(x.toFixed(3)), r6 = (x) => Number(x.toFixed(6));
+// ---- number formatting matching the C++ frame/meta JSON (printf %.nf). toFixed rounds an exact tie
+// (the double is exactly halfway between two decimals, so x * 2^(p+1) is an odd integer) upward where
+// glibc rounds it to even; every other value rounds identically since both work on the exact binary value.
+const POW10 = [1, 10, 100, 1000, 10000, 100000, 1000000];
+function fix(x, p) {
+  const N = x * (2 << p);  // x * 2^(p+1), exact
+  if (Number.isInteger(N) && (N % 2 !== 0)) {
+    const m = Math.abs(x) * POW10[p];  // an exact half-integer
+    const k = Math.floor(m);
+    const r = ((k % 2 === 0) ? k : k + 1) / POW10[p];
+    return x < 0 ? -r : r;
+  }
+  return Number(x.toFixed(p));
+}
+const r1 = (x) => fix(x, 1), r2 = (x) => fix(x, 2), r3 = (x) => fix(x, 3), r6 = (x) => fix(x, 6);
 
 class Body {
   constructor(members) {
@@ -145,6 +214,7 @@ class Player {
     this.need = new Float64Array(TYPES);
     this.banked = new Float64Array(TYPES);
     this.padAngle = 0;
+    this.padCos = 1; this.padSin = 0;  // cos/sin of padAngle (the C++ recomputes them at every pad_pos call)
     this.intent = 0;
     this.joinable = false;
     this.dx = 0; this.dy = 0;
@@ -207,7 +277,7 @@ export class Game {
     this.rewards = new Float64Array(0);
     this.seats = new Int32Array(this.cfg.n_players);
     this.seatNames = new Array(this.cfg.n_players).fill('policy');
-    this.stats = new Stats();
+    this._stats = new Stats();
     const P2 = MAX_PLAYERS * MAX_PLAYERS;
     // pairwise history (indexed [i * MAX_PLAYERS + j])
     this.comemberTime = new Float64Array(P2);
@@ -240,6 +310,7 @@ export class Game {
     this._counts = new Int32Array(TYPES);
     this._probs = new Float64Array(TYPES);
     this._amount = new Float64Array(TYPES);
+    this._bp = new Float64Array(MAX_PLAYERS);  // potentials(): banked progress per player
     this._keep = new Uint8Array(0);
     this.reset(seed);
   }
@@ -252,12 +323,12 @@ export class Game {
 
   padPos(i, out) {
     const r = Math.max(this.R - this.cfg.pad_radius - 0.02, 0.1);
-    const a = this.players[i].padAngle;
-    out.x = r * Math.cos(a); out.y = r * Math.sin(a);
+    const p = this.players[i];
+    out.x = r * p.padCos; out.y = r * p.padSin;
     return out;
   }
-  padX(i) { return Math.max(this.R - this.cfg.pad_radius - 0.02, 0.1) * Math.cos(this.players[i].padAngle); }
-  padY(i) { return Math.max(this.R - this.cfg.pad_radius - 0.02, 0.1) * Math.sin(this.players[i].padAngle); }
+  padX(i) { return Math.max(this.R - this.cfg.pad_radius - 0.02, 0.1) * this.players[i].padCos; }
+  padY(i) { return Math.max(this.R - this.cfg.pad_radius - 0.02, 0.1) * this.players[i].padSin; }
 
   bodyIndex(player) { return this._bodyOf[player]; }
   _rebuildIndex() {
@@ -277,7 +348,7 @@ export class Game {
   bankedTotal(i) { const p = this.players[i]; return p.banked[0] + p.banked[1] + p.banked[2] + p.banked[3]; }
 
   event(obj) { obj.t = r2(this.t); this.events.push(obj); }
-  static nums(v, n, prec) { const out = new Array(n); for (let k = 0; k < n; k++) out[k] = Number(v[k].toFixed(prec)); return out; }
+  static nums(v, n, prec) { const out = new Array(n); for (let k = 0; k < n; k++) out[k] = fix(v[k], prec); return out; }
 
   // ------------------------------------------------------------ seats and inputs
   // names: array of seat names ('policy', 'snapshot', 'solo', 'bail', 'loyal', 'kidnap', 'rammer', 'grudge',
@@ -320,7 +391,7 @@ export class Game {
     this.t = 0; this.done = false; this.winner = -1; this.timeoutWin = false; this.R = 1.0;
     this.tickCount = 0;
     this.events.length = 0;
-    this.stats = new Stats();
+    this._stats = new Stats();
     const n = cfg.n_players;
     this.players = [];
     for (let i = 0; i < n; i++) this.players.push(new Player());
@@ -331,6 +402,7 @@ export class Game {
       for (let t = 0; t < TYPES; t++) { p.need[t] = cfg.need_secondary; p.banked[t] = 0; }
       p.need[primary] = cfg.need_primary;
       p.padAngle = rot + 2 * PI * i / n;
+      p.padCos = crCos(p.padAngle); p.padSin = crSin(p.padAngle);
       p.intent = this.rng.uniformInt(0, TYPES - 1);
     }
     const M = cfg.n_mines;
@@ -343,14 +415,15 @@ export class Game {
     for (let m = 0; m < M; m++) {
       const ring = (m % 2 === 0) ? 0.62 : 0.35;
       const ang = mrot + 2 * PI * m / M;
-      this.mineX[m] = ring * Math.cos(ang); this.mineY[m] = ring * Math.sin(ang);
+      this.mineX[m] = ring * crCos(ang); this.mineY[m] = ring * crSin(ang);
       this.mineType[m] = (M >= 2 * TYPES) ? Math.trunc(m / 2) % TYPES : m % TYPES;
     }
     this.mineNbr = [];
     for (let m = 0; m < M; m++) {
       const nb = [];
       for (let j = 0; j < M; j++) {
-        if (j !== m && Math.hypot(this.mineX[m] - this.mineX[j], this.mineY[m] - this.mineY[j]) < cfg.seed_range) nb.push(j);
+        const ddx = this.mineX[m] - this.mineX[j], ddy = this.mineY[m] - this.mineY[j];
+        if (j !== m && Math.sqrt(ddx * ddx + ddy * ddy) < cfg.seed_range) nb.push(j);
       }
       this.mineNbr.push(nb);
     }
@@ -358,7 +431,7 @@ export class Game {
     for (let i = 0; i < n; i++) {
       const b = new Body([i]);
       b.head = i;
-      b.x = 0.72 * Math.cos(this.players[i].padAngle); b.y = 0.72 * Math.sin(this.players[i].padAngle);
+      b.x = 0.72 * this.players[i].padCos; b.y = 0.72 * this.players[i].padSin;
       this.bodies.push(b);
     }
     this._rebuildIndex();
@@ -403,7 +476,7 @@ export class Game {
     if (move === 0) { p.dx = 0; p.dy = 0; p.macro = -1; }
     else if (move === 9) { /* keep the direction set through setDirection (human seats) */ }
     else if (move >= MACRO_BASE) { p.macro = move; this.steerMacro(i); }
-    else { const a = 2 * PI * (move - 1) / 8; p.dx = Math.cos(a); p.dy = Math.sin(a); p.macro = -1; }
+    else { p.dx = COMPASS_X[move]; p.dy = COMPASS_Y[move]; p.macro = -1; }  // cos/sin of 2*pi*(move-1)/8
     p.joinable = joinable !== 0;
     const bi = this.bodyIndex(i);
     const n = this.bodies[bi].n();
@@ -413,7 +486,7 @@ export class Game {
       if (p.leaveTimer < 0) { p.leaveTimer = cfg.leave_time; this.event({ kind: 'leave_start', player: i }); }
     } else if (!leave && p.leaveTimer >= 0 && this.t - p.leaveLastReq > cfg.leave_hold) {
       p.leaveTimer = -1.0;
-      this.stats.cancels++;
+      this._stats.cancels++;
       this.event({ kind: 'leave_cancel', player: i });
     }
   }
@@ -485,23 +558,24 @@ export class Game {
     if (!this._botHas) return 0;
     const tx = this._botTgt.x, ty = this._botTgt.y;
     const nm = Math.min(this.cfg.n_mines, MACRO_MINES);
-    for (let m = 0; m < nm; m++) if (Math.hypot(tx - this.mineX[m], ty - this.mineY[m]) < 1e-9) return MACRO_BASE + m;
-    if (Math.hypot(tx - this.padX(i), ty - this.padY(i)) < 1e-9) return MACRO_BASE + MACRO_MINES;
+    const norm = (x, y) => Math.sqrt(x * x + y * y);
+    for (let m = 0; m < nm; m++) if (norm(tx - this.mineX[m], ty - this.mineY[m]) < 1e-9) return MACRO_BASE + m;
+    if (norm(tx - this.padX(i), ty - this.padY(i)) < 1e-9) return MACRO_BASE + MACRO_MINES;
     const b = this.bodies[this._bodyOf[i]];
-    if (b.n() > 1 && b.head >= 0 && Math.hypot(tx - this.padX(b.head), ty - this.padY(b.head)) < 1e-9) return MACRO_BASE + MACRO_MINES + 1;
-    for (const j of b.members) if (j !== i && Math.hypot(tx - this.padX(j), ty - this.padY(j)) < 1e-9) return MACRO_BASE + MACRO_MINES + 1;  // a partner's pad: closest class
+    if (b.n() > 1 && b.head >= 0 && norm(tx - this.padX(b.head), ty - this.padY(b.head)) < 1e-9) return MACRO_BASE + MACRO_MINES + 1;
+    for (const j of b.members) if (j !== i && norm(tx - this.padX(j), ty - this.padY(j)) < 1e-9) return MACRO_BASE + MACRO_MINES + 1;  // a partner's pad: closest class
     const cnt = this.nearestOthers(i);
     let best = -1;
     let bd = 0.15;
     for (let k = 0; k < Math.min(cnt, MACRO_BODIES); k++) {
       const bo = this.bodies[this._bodyOf[this._ordIdx[k]]];
-      const d = Math.hypot(tx - bo.x, ty - bo.y);
+      const d = norm(tx - bo.x, ty - bo.y);
       if (d < bd) { bd = d; best = k; }
     }
     if (best >= 0) return MACRO_BASE + MACRO_MINES + 2 + best;
     // anything else (a pickup, a predicted position): the nearest mine to the target
     let bm = -1, bmd = 1e9;
-    for (let m = 0; m < nm; m++) { const d = Math.hypot(tx - this.mineX[m], ty - this.mineY[m]); if (d < bmd) { bmd = d; bm = m; } }
+    for (let m = 0; m < nm; m++) { const d = norm(tx - this.mineX[m], ty - this.mineY[m]); if (d < bmd) { bmd = d; bm = m; } }
     return bm >= 0 && bmd < 0.2 ? MACRO_BASE + bm : 0;
   }
 
@@ -515,11 +589,12 @@ export class Game {
     const n = cfg.n_players;
     const decision = this.tickCount % this.decideEvery === 0;
     const act = this._act;
+    // Phase 1: every bot decides on the same state (ugb_step computes all bot actions before applying any).
+    if (decision) for (let i = 0; i < n; i++) if (this.seats[i] >= SEAT_SOLO) this._botAction(this.seats[i], i, act, i * 4);
+    // Phase 2: apply in seat order.
     for (let i = 0; i < n; i++) {
       if (this.seats[i] >= SEAT_SOLO) {
-        if (!decision) continue;
-        this._botAction(this.seats[i], i, act, i * 4);
-        this.applyAction(i, act[i * 4], act[i * 4 + 1], act[i * 4 + 2], act[i * 4 + 3]);
+        if (decision) this.applyAction(i, act[i * 4], act[i * 4 + 1], act[i * 4 + 2], act[i * 4 + 3]);
       } else if (decision || this.inputDirty[i]) {
         const s = this.inputs[i];
         if (s.move === 9) this.setDirection(i, s.dir[0], s.dir[1]);
@@ -576,10 +651,10 @@ export class Game {
       for (let i = 0; i < n; i++) pot[i] -= cfg.lose_penalty;
       pot[this.winner] += cfg.lose_penalty + cfg.win_bonus;
     }
-    this.stats.steps++;
+    this._stats.steps++;
     let gs = 0;
     for (let i = 0; i < n; i++) gs += this.bodies[this._bodyOf[i]].n();
-    this.stats.group += gs / n;
+    this._stats.group += gs / n;
     if (this.done) {
       // close open alliances for the duration statistics
       for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if (i !== j && this.pairSince[i * MAX_PLAYERS + j] >= 0) this.endPair(i, j);
@@ -679,9 +754,9 @@ export class Game {
     const ij = i * MAX_PLAYERS + j;
     if (this.pairSince[ij] >= 0) {
       const dur = this.t - this.pairSince[ij];
-      this.stats.alliances++;
-      this.stats.alliance_dur += dur;
-      if (dur >= 10.0) this.stats.alliances_long++;
+      this._stats.alliances++;
+      this._stats.alliance_dur += dur;
+      if (dur >= 10.0) this._stats.alliances_long++;
       this.pairEnded[ij] = this.t;
       this.pairSince[ij] = -1;
     }
@@ -724,7 +799,7 @@ export class Game {
       ux = -mx; uy = -my;
     }
     const un = Math.sqrt(ux * ux + uy * uy);
-    if (un < 1e-6) { const ang = this.uniform(0, 2 * PI); ux = Math.cos(ang); uy = Math.sin(ang); }
+    if (un < 1e-6) { const ang = this.uniform(0, 2 * PI); ux = crCos(ang); uy = crSin(ang); }
     else { ux = ux * (1.0 / un); uy = uy * (1.0 / un); }
     const nb = new Body([i]);
     nb.head = i;
@@ -738,8 +813,8 @@ export class Game {
     this.bodies.push(nb);
     this._bodyOf[i] = this.bodies.length - 1;
     this.crown(this.bodies[bi]);
-    this.stats.leaves++;
-    this.stats.units_taken += taken;
+    this._stats.leaves++;
+    this._stats.units_taken += taken;
     this.event({ kind: 'leave', player: i, share: Game.nums(share, TYPES, 2), from_size: fromSize });
   }
 
@@ -784,7 +859,7 @@ export class Game {
     if (h < 0 && member(b.head)) h = b.head;
     if (h < 0) h = pick(false, true);
     if (h < 0) h = pick(false, false);
-    if (h !== b.head) { this.stats.crowns++; this.event({ kind: 'crown', player: h, group: b.members.slice() }); }
+    if (h !== b.head) { this._stats.crowns++; this.event({ kind: 'crown', player: h, group: b.members.slice() }); }
     b.head = h;
   }
 
@@ -840,7 +915,7 @@ export class Game {
                 const aFaster = (a.vx * nx + a.vy * ny) > -(b.vx * nx + b.vy * ny);
                 a.stun = Math.max(a.stun, cfg.stun_time * (aFaster ? cfg.rammer_stun_mult : 1.0));
                 b.stun = Math.max(b.stun, cfg.stun_time * (aFaster ? 1.0 : cfg.rammer_stun_mult));
-                this.stats.spills++;
+                this._stats.spills++;
                 this.event({ kind: 'spill', a: a.members.slice(), b: b.members.slice(), units: sa + sb, speed: r2(rel), x: r3(cx), y: r3(cy) });
               }
             }
@@ -880,8 +955,8 @@ export class Game {
     this.bodies = nb;
     this._rebuildIndex();
     this.crown(this.bodies[this.bodies.length - 1]);
-    this.stats.merges++;
-    if (fast) this.stats.remerge_fast++;
+    this._stats.merges++;
+    if (fast) this._stats.remerge_fast++;
     this.event({ kind: 'merge', a: a.members.slice(), b: b.members.slice(), size: m.n() });
   }
 
@@ -905,7 +980,7 @@ export class Game {
       for (let k = 0; k < counts[t]; k++) {
         const ang = this.uniform(0, 2 * PI);
         const rad = this.uniform(0.04, 0.12);
-        let px = cx + rad * Math.cos(ang), py = cy + rad * Math.sin(ang);
+        let px = cx + rad * crCos(ang), py = cy + rad * crSin(ang);
         const d = Math.sqrt(px * px + py * py);
         if (d > this.R - 0.02) { const s = (this.R - 0.02) / d; px = px * s; py = py * s; }
         this.picks.push({ x: px, y: py, type: t, ttl: cfg.pickup_ttl });
@@ -975,8 +1050,8 @@ export class Game {
             this.bankedWhile[j * MAX_PLAYERS + i] += total;
             if (cfg.brand && this.brand[j] > 0) this.brand[j] = Math.max(0.0, this.brand[j] - total);  // redemption: a second per unit banked for others
           }
-          this.stats.banks++;
-          if (b.n() > 1) { this.stats.group_banks++; if (fair) this.stats.fair_banks++; }
+          this._stats.banks++;
+          if (b.n() > 1) { this._stats.group_banks++; if (fair) this._stats.fair_banks++; }
           this.event({ kind: 'bank', player: i, amount: Game.nums(amount, TYPES, 2), group: mem.slice() });
           this.crown(b);
           break;
@@ -1050,10 +1125,10 @@ export class Game {
       bpi /= TYPES; cp /= TYPES;
       out[i] = 10.0 * bpi + cfg.carried_shaping * (cp - bpi);
       sum += bpi;
-      this._ordDist[i] = bpi;  // scratch: banked progress per player
+      this._bp[i] = bpi;
     }
     if (n > 1 && cfg.relative_reward > 0) {
-      for (let i = 0; i < n; i++) out[i] -= cfg.relative_reward * 10.0 * (sum - this._ordDist[i]) / (n - 1);
+      for (let i = 0; i < n; i++) out[i] -= cfg.relative_reward * 10.0 * (sum - this._bp[i]) / (n - 1);
     }
     return out;
   }
@@ -1144,7 +1219,7 @@ export class Game {
     // nearest pickups (stable on insertion order)
     const picks = this.picks;
     const po = [];
-    for (let q = 0; q < picks.length; q++) po.push([Math.hypot(picks[q].x - px, picks[q].y - py), q]);
+    for (let q = 0; q < picks.length; q++) po.push([Math.sqrt((picks[q].x - px) * (picks[q].x - px) + (picks[q].y - py) * (picks[q].y - py)), q]);
     po.sort((a, b2) => a[0] - b2[0] || a[1] - b2[1]);
     const cntp = Math.min(po.length, N_PICKUPS_OBS);
     for (let q = 0; q < cntp; q++) {
@@ -1197,7 +1272,8 @@ export class Game {
     for (let m = 0; m < this.cfg.n_mines; m++) {
       if (!this.mineAlive[m] || this.mineStock[m] < 1.0) continue;
       if (types && !types[this.mineType[m]]) continue;
-      const d = Math.hypot(this.mineX[m] - x, this.mineY[m] - y);
+      const ddx = this.mineX[m] - x, ddy = this.mineY[m] - y;
+      const d = Math.sqrt(ddx * ddx + ddy * ddy);
       if (d < bd) { best = m; bd = d; }
     }
     return best;
@@ -1264,7 +1340,8 @@ export class Game {
       const b = this.bodies[k];
       if (b.members.indexOf(i) >= 0) continue;
       if (!this.allJoinable(b)) continue;
-      const d = Math.hypot(b.x - x, b.y - y);
+      const ddx = b.x - x, ddy = b.y - y;
+      const d = Math.sqrt(ddx * ddx + ddy * ddy);
       if (d < bd) { best = k; bd = d; }
     }
     return best;
@@ -1302,13 +1379,14 @@ export class Game {
       const myShare = b.poolTotal() / b.n();
       for (const j of b.members) {
         if (j === i) continue;
-        if (Math.hypot(this.padX(j) - b.x, this.padY(j) - b.y) < padDanger && b.poolTotal() >= bailAt) leave = 1;
+        const ddx = this.padX(j) - b.x, ddy = this.padY(j) - b.y;
+        if (Math.sqrt(ddx * ddx + ddy * ddy) < padDanger && b.poolTotal() >= bailAt) leave = 1;
       }
       if (b.poolTotal() >= bankAt) {
         if (cfg.crown && b.head >= 0) this.padPos(b.head, target); else { target.x = mpx; target.y = mpy; }
         has = true;
       }
-      if (myShare >= bailAt && Math.hypot(mpx - b.x, mpy - b.y) > 0.6 && leave === 0) leave = 1;
+      if (myShare >= bailAt && Math.sqrt((mpx - b.x) * (mpx - b.x) + (mpy - b.y) * (mpy - b.y)) > 0.6 && leave === 0) leave = 1;
     } else {
       if (b.poolTotal() >= bailAt) { target.x = mpx; target.y = mpy; has = true; }
     }
@@ -1349,7 +1427,7 @@ export class Game {
     }
     let joinable = 1;
     if (cfg.brand) {  // shun: close the door while a branded body is within reach
-      for (const ob of this.bodies) if (ob !== b && this.bodyBranded(ob) && Math.hypot(ob.x - b.x, ob.y - b.y) < 0.25 + this.radius(b.n()) + this.radius(ob.n())) joinable = 0;
+      for (const ob of this.bodies) if (ob !== b && this.bodyBranded(ob) && Math.sqrt((ob.x - b.x) * (ob.x - b.x) + (ob.y - b.y) * (ob.y - b.y)) < 0.25 + this.radius(b.n()) + this.radius(ob.n())) joinable = 0;
     }
     this._botHas = true;
     act[o] = directionToMove(target.x - b.x, target.y - b.y);
@@ -1377,13 +1455,13 @@ export class Game {
         let bd = 0.6;
         for (const ob of this.bodies) {
           if (ob === b || !this.allJoinable(ob) || this.bodyHasLeaver(ob) || this.bodyBranded(ob)) continue;
-          const d = Math.hypot(ob.x - b.x, ob.y - b.y);
+          const d = Math.sqrt((ob.x - b.x) * (ob.x - b.x) + (ob.y - b.y) * (ob.y - b.y));
           if (d < bd) { bd = d; target.x = ob.x; target.y = ob.y; has = true; }
         }
       }
     }
     for (const ob of this.bodies)
-      if (ob !== b && Math.hypot(ob.x - b.x, ob.y - b.y) < 0.25 + this.radius(b.n()) + this.radius(ob.n()) && (this.bodyHasLeaver(ob) || this.bodyBranded(ob))) joinable = 0;
+      if (ob !== b && Math.sqrt((ob.x - b.x) * (ob.x - b.x) + (ob.y - b.y) * (ob.y - b.y)) < 0.25 + this.radius(b.n()) + this.radius(ob.n()) && (this.bodyHasLeaver(ob) || this.bodyBranded(ob))) joinable = 0;
     if (!has) {
       if (b.n() > 1) has = this.groupMineTarget(b, target); else has = this.mineTarget(i, b.x, b.y, target);
       if (!has) this.padPos(i, target);
@@ -1427,7 +1505,7 @@ export class Game {
     if (b.poolTotal() >= 4.0) { this.padPos(i, target); has = true; }
     if (!has) {
       let bd = 0.3;
-      for (const pk of this.picks) { const d = Math.hypot(pk.x - b.x, pk.y - b.y); if (d < bd) { bd = d; target.x = pk.x; target.y = pk.y; has = true; } }
+      for (const pk of this.picks) { const d = Math.sqrt((pk.x - b.x) * (pk.x - b.x) + (pk.y - b.y) * (pk.y - b.y)); if (d < bd) { bd = d; target.x = pk.x; target.y = pk.y; has = true; } }
     }
     if (!has) {
       let best = 2.0;
@@ -1499,9 +1577,11 @@ export class Game {
     return { seed: this.seed, needs, pads, mine_pos: minePos, mine_type: mineType, winner: this.winner, timeout_win: this.timeoutWin, cfg: configToArray(cfg) };
   }
 
-  // Round statistics in the ep_stats convention of ugb_step (alliances counted per pair once).
+  // Round statistics in the ep_stats convention of ugb_step (alliances counted per pair once). The raw
+  // counters (C++ Stats field names) are in game._stats.
+  get stats() { return this.statsSummary; }
   get statsSummary() {
-    const s = this.stats;
+    const s = this._stats;
     return {
       steps: s.steps, avgGroup: s.group / Math.max(1, s.steps), merges: s.merges, leaves: s.leaves, spills: s.spills,
       banks: s.banks, groupBanks: s.group_banks, remergeFast: s.remerge_fast, cancels: s.cancels,

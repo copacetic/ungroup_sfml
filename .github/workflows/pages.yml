@@ -1,0 +1,54 @@
+# Deploys the browser version (web/) to GitHub Pages. The page is fully static: no build step, no
+# server. Enable Pages with "Source: GitHub Actions" in the repository settings once; after that every
+# push to main (or master, this repository's default branch) publishes web/ at
+# https://<owner>.github.io/<repo>/ . The rules core, renderer, networking and models are all plain
+# files under web/, so the upload is the folder as is.
+name: Deploy web/ to GitHub Pages
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'web/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# one deployment at a time; do not cancel a deployment already in flight
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Node tests (no dependencies)
+        run: |
+          node web/test/session.test.mjs
+          node web/test/session_robust.test.mjs
+          node web/test/net.test.mjs
+          node web/test/conformance.mjs   # engine vs the checked-in C++ reference (web/test/reference.json)
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+      - id: deployment
+        uses: actions/deploy-pages@v4

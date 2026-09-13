@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ungroup agent demo</title>
+<style>
+  body { background: rgb(34, 32, 52); color: #ddd; font: 14px/1.4 system-ui, sans-serif; margin: 0; padding: 16px; }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  label { margin-right: 12px; }
+  input, select, button { font: inherit; background: #2b2a44; color: #eee; border: 1px solid #555; border-radius: 4px; padding: 3px 6px; }
+  button { cursor: pointer; }
+  #summary { font-size: 16px; color: #f3e59a; margin: 10px 0; white-space: pre-wrap; }
+  table { border-collapse: collapse; margin-top: 8px; }
+  td, th { border: 1px solid #444; padding: 2px 8px; text-align: right; font-variant-numeric: tabular-nums; }
+  th { background: #2b2a44; }
+  pre { background: #1c1b2e; padding: 8px; overflow-x: auto; max-height: 40vh; }
+  .note { color: #999; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>Ungroup agent demo: six ONNX agent seats through web/src/engine.js</h1>
+<p class="note">Loads onnxruntime-web from jsDelivr (needs network), the exported policy from <code>../models/</code>,
+plays self-play rounds with paired seeds through the JS engine (seat i observes with <code>game.observe(i)</code>, the agent
+samples the masked logits, <code>game.setInput(i, ...)</code>, <code>game.step(decideEvery)</code>) and prints the mean progress per seat,
+the same quantity as <code>rl/play_v2.py eval</code> "self-play". Query parameters: <code>?auto=1&amp;model=v9_150&amp;games=16&amp;seed=5000&amp;det=0</code>.</p>
+<div>
+  <label>model <select id="model">
+    <option value="v9_150">v9_150 (legacy 9-way move head, decide every 6)</option>
+    <option value="v10_100">v10_100 (macro 24-way move head, decide every 15)</option>
+  </select></label>
+  <label>games <input id="games" type="number" value="16" min="1" max="200" style="width:5em"></label>
+  <label>seed <input id="seed" type="number" value="5000" style="width:7em"></label>
+  <label><input id="det" type="checkbox"> deterministic (argmax)</label>
+  <button id="run">run</button>
+  <button id="stop" disabled>stop</button>
+</div>
+<div id="summary">idle</div>
+<table id="table"><thead><tr><th>game</th><th>seed</th><th>winner</th><th>timeout</th><th>len s</th><th>mean prog</th><th>per seat</th><th>merges</th><th>leaves</th><th>spills</th><th>banks</th><th>alliances</th><th>dur s</th><th>ms</th></tr></thead><tbody></tbody></table>
+<pre id="log"></pre>
+<script type="module">
+import { Game } from '../src/engine.js';
+import { loadAgent, ORT_URL } from '../src/agent.js';
+
+const $ = (id) => document.getElementById(id);
+const logEl = $('log');
+function log(s) { logEl.textContent += s + '\n'; console.log(s); }
+const q = new URLSearchParams(location.hash.replace(/^#/, '') || location.search);
+if (q.get('model')) $('model').value = q.get('model');
+if (q.get('games')) $('games').value = q.get('games');
+if (q.get('seed')) $('seed').value = q.get('seed');
+if (q.get('det') === '1') $('det').checked = true;
+
+let stopFlag = false;
+const agents = {};
+window.__result = null;   // filled when a run finishes (Playwright reads it)
+window.__error = null;
+
+async function getAgent(name) {
+  if (!agents[name]) {
+    log(`loading onnxruntime-web (${ORT_URL}) and ../models/${name}.onnx`);
+    const t0 = performance.now();
+    agents[name] = await loadAgent(`../models/${name}.onnx`);
+    const a = agents[name];
+    log(`agent ready in ${(performance.now() - t0).toFixed(0)} ms: obsDim ${a.obsDim} nvec [${a.nvec}] decideEvery ${a.decideEvery} macro ${a.macro} samples ${a.meta?.samples}`);
+  }
+  return agents[name];
+}
+
+async function playGame(agent, cfg, seed, deterministic) {
+  const n = cfg.n_players;
+  const game = new Game(cfg, seed);
+  game.decideEvery = agent.decideEvery;
+  game.setSeats(new Array(n).fill('agent'));
+  if (game.obsDim() !== agent.obsDim) throw new Error(`engine obsDim ${game.obsDim()} != model obsDim ${agent.obsDim}`);
+  const t0 = performance.now();
+  let decisions = 0;
+  const mask = { deterministic };
+  while (!game.done) {
+    const obs = game.observeAll();
+    const acts = await agent.actBatch(obs, n, mask);
+    for (let i = 0; i < n; i++) game.setInput(i, agent.toInput(acts[i]));
+    game.step(game.decideEvery);
+    if (++decisions % 60 === 0) { await new Promise((r) => setTimeout(r, 0)); if (stopFlag) break; }
+  }
+  const prog = [];
+  for (let i = 0; i < n; i++) prog.push(game.progress(i));
+  const s = game.stats;
+  return { seed, winner: game.winner, timeout: game.timeoutWin, length: game.t, progress: prog,
+           mean: prog.reduce((a, b) => a + b, 0) / n, merges: s.merges, leaves: s.leaves, spills: s.spills, banks: s.banks,
+           groupBanks: s.groupBanks, alliances: s.alliances, allianceDur: s.allianceDur, alliancesLong: s.alliancesLong,
+           avgGroup: s.avgGroup, ms: performance.now() - t0, decisions, stopped: stopFlag };
+}
+
+function mean(xs) { return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0; }
+
+async function run() {
+  stopFlag = false; window.__result = null; window.__error = null;
+  $('run').disabled = true; $('stop').disabled = false;
+  $('table').querySelector('tbody').innerHTML = '';
+  const name = $('model').value, games = +$('games').value, seed0 = +$('seed').value, det = $('det').checked;
+  try {
+    const agent = await getAgent(name);
+    // the checkpoint's own training config (life preset, 6 players) from the sidecar json, like play_v2.py eval
+    const cfg = Object.assign({}, agent.meta?.config ?? {}, { n_players: 6 });
+    log(`config: crown ${cfg.crown} brand ${cfg.brand} bloom_rate ${cfg.bloom_rate} bloom_cap ${cfg.bloom_cap} bank_round ${cfg.bank_round} time_limit ${cfg.time_limit}`);
+    const results = [];
+    for (let e = 0; e < games && !stopFlag; e++) {
+      const r = await playGame(agent, cfg, seed0 + e, det);
+      if (r.stopped) break;
+      results.push(r);
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${e}</td><td>${r.seed}</td><td>${r.winner}</td><td>${r.timeout ? 'yes' : 'no'}</td><td>${r.length.toFixed(0)}</td><td>${r.mean.toFixed(3)}</td>` +
+        `<td>${r.progress.map((p) => p.toFixed(2)).join(' ')}</td><td>${r.merges}</td><td>${r.leaves}</td><td>${r.spills}</td><td>${r.banks}</td><td>${r.alliances}</td><td>${r.allianceDur.toFixed(1)}</td><td>${r.ms.toFixed(0)}</td>`;
+      $('table').querySelector('tbody').appendChild(tr);
+      const m = results.map((x) => x.mean);
+      const mu = mean(m), se = results.length > 1 ? Math.sqrt(m.reduce((a, b) => a + (b - mu) ** 2, 0) / (m.length - 1) / m.length) : 0;
+      $('summary').textContent = `${name}: ${results.length}/${games} games, mean progress ${mu.toFixed(3)} (se ${se.toFixed(3)}), ` +
+        `early_finish ${mean(results.map((x) => (x.timeout ? 0 : 1))).toFixed(2)} len ${mean(results.map((x) => x.length)).toFixed(0)}s ` +
+        `group ${mean(results.map((x) => x.avgGroup)).toFixed(2)} merges ${mean(results.map((x) => x.merges)).toFixed(1)} leaves ${mean(results.map((x) => x.leaves)).toFixed(1)} ` +
+        `spills ${mean(results.map((x) => x.spills)).toFixed(1)} banks ${mean(results.map((x) => x.banks)).toFixed(1)} group_banks ${mean(results.map((x) => x.groupBanks)).toFixed(1)} ` +
+        `alliances ${mean(results.map((x) => x.alliances)).toFixed(1)} mean_dur ${mean(results.filter((x) => x.alliances > 0).map((x) => x.allianceDur)).toFixed(1)}s long(>=10s) ${mean(results.map((x) => x.alliancesLong)).toFixed(1)} ` +
+        `[${(mean(results.map((x) => x.ms)) / 1000).toFixed(1)} s/game]`;
+    }
+    const m = results.map((x) => x.mean);
+    const mu = mean(m), se = results.length > 1 ? Math.sqrt(m.reduce((a, b) => a + (b - mu) ** 2, 0) / (m.length - 1) / m.length) : 0;
+    window.__result = { model: name, games: results.length, seed: seed0, deterministic: det, progress: mu, se,
+      finished_early: mean(results.map((x) => (x.timeout ? 0 : 1))), length: mean(results.map((x) => x.length)), avg_group: mean(results.map((x) => x.avgGroup)),
+      merges: mean(results.map((x) => x.merges)), leaves: mean(results.map((x) => x.leaves)), spills: mean(results.map((x) => x.spills)),
+      banks: mean(results.map((x) => x.banks)), group_banks: mean(results.map((x) => x.groupBanks)), alliances: mean(results.map((x) => x.alliances)),
+      alliance_dur: mean(results.filter((x) => x.alliances > 0).map((x) => x.allianceDur)), alliances_long: mean(results.map((x) => x.alliancesLong)),
+      ms_per_game: mean(results.map((x) => x.ms)), results };
+    log(`done: mean progress ${mu.toFixed(3)} (se ${se.toFixed(3)}) over ${results.length} games`);
+  } catch (err) {
+    window.__error = String(err && err.stack || err);
+    $('summary').textContent = 'error: ' + err;
+    log('error: ' + (err && err.stack || err));
+  }
+  $('run').disabled = false; $('stop').disabled = true;
+}
+
+$('run').onclick = run;
+$('stop').onclick = () => { stopFlag = true; };
+if (q.get('auto') === '1') run();
+</script>
+</body>
+</html>

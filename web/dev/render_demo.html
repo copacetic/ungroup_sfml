@@ -17,6 +17,7 @@
 import { createRenderer } from '../src/render.js';
 
 // query: ?t=20 (start seconds) &paused=1 &me=0 (-1 = spectator) &mode=canvas2d &replay=sample_replay.json &bodies=20 (synthetic stress frame)
+//        &zoom=2 &cx=0.3&cy=-0.2 (pin the camera) &sync=1 (gl.finish() after each draw so the timing includes the GPU)
 const q = new URLSearchParams(location.hash.slice(1) || location.search.slice(1));
 const canvas = document.getElementById('c');
 const bar = document.getElementById('bar');
@@ -75,7 +76,8 @@ function loop(now) {
   if (!paused) playT = Math.min(frames.length * frameDt - 0.001, playT + dt * speed);
   const frame = stress ? stressFrame(stress) : frameAt(playT);
   const t0 = performance.now();
-  R.draw({ frame, meta: stressMeta, cfg, me, time: now / 1000, names, camera: q.has('zoom') ? { zoom: parseFloat(q.get('zoom')) } : undefined });
+  R.draw({ frame, meta: stressMeta, cfg, me, time: now / 1000, names, camera: q.has('cx') ? { x: parseFloat(q.get('cx')), y: parseFloat(q.get('cy') || '0'), zoom: parseFloat(q.get('zoom') || '1') } : q.has('zoom') ? { zoom: parseFloat(q.get('zoom')) } : undefined });
+  if (q.get('sync') === '1') R.finish();
   const ms = performance.now() - t0;
   drawCount++; drawSum += ms; drawMax = Math.max(drawMax, ms);
   bar.textContent = `${R.mode}  t=${frame.t.toFixed(1)}s  frame ${frameIndex}/${frames.length}  bodies ${frame.bodies.length}  draw ${ms.toFixed(2)} ms (avg ${(drawSum / drawCount).toFixed(2)}, max ${drawMax.toFixed(2)})  ${paused ? 'PAUSED' : 'x' + speed}  [space pause, ←/→ seek 5 s, +/- speed, r reset]`;
