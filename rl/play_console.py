@@ -14,7 +14,8 @@ Play Ungroup from a terminal, one coarse decision at a time (for reviewing the d
   curl -s localhost:8123/replay > round.json           # replay of the current round so far
 
 The game runs on the canonical C++ core; the seat named 'me' is the external seat you control. Bots act
-every 6 ticks. The report shows what a player can see: public state only (no other needs).
+every 6 ticks. Seats named 'agent' are driven by a trained policy (--checkpoint, default rl/models/v10_100.pt).
+The report shows what a player can see: public state only (no other needs).
 """
 
 import argparse
@@ -36,16 +37,34 @@ TYPES = "ABCD"
 
 
 class Console:
-    def __init__(self, seats, cfg, seed):
+    def __init__(self, seats, cfg, seed, checkpoint=None):
         self.seats = seats
         self.me = seats.index("me")
         self.n = len(seats)
         self.cfg = cfg.replace(n_players=self.n)
         self.batch = NativeBatch(1, self.cfg, seed=seed, decide_every=1)
-        self.core_seats = ["policy" if s == "me" else s for s in seats]
+        self.core_seats = ["policy" if s in ("me", "agent") else s for s in seats]
+        self.agents = [i for i, s in enumerate(seats) if s == "agent"]
+        self.policy = None
+        self.agent_every = 6
+        if self.agents:
+            from train_v2 import load_checkpoint
+            self.policy, _, _ = load_checkpoint(checkpoint)
+            self.agent_every = max(6, getattr(self.policy, "decide_every", 6))
         self.act = np.zeros((1, self.n, 4), dtype=np.int32)
         self.lock = threading.Lock()
         self.new(seed)
+
+    def agent_decide(self):
+        if not self.agents or self.tick % self.agent_every != 0:
+            return
+        import torch
+        obs = self.batch.observe()[0]
+        with torch.no_grad():
+            a, _ = self.policy.act(torch.from_numpy(obs))
+        a = a.numpy()
+        for i in self.agents:
+            self.act[0, i] = a[i]
 
     def new(self, seed):
         self.seed = seed
@@ -63,6 +82,7 @@ class Console:
         for k in range(steps):
             if self.batch.done(0):
                 break
+            self.agent_decide()
             self.batch.step(self.act, auto_reset=False, decide_every=6)
             self.tick += 6
             fr = self.batch.frame(0)
@@ -186,9 +206,10 @@ def main():
     ap.add_argument("--seats", default="me,loyal,bail,grudge,solo,bail")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--port", type=int, default=8123)
+    ap.add_argument("--checkpoint", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "v10_100.pt"))
     a = ap.parse_args()
     cfg = parse_sets(a.set, a.preset)
-    con = Console(a.seats.split(","), cfg, a.seed)
+    con = Console(a.seats.split(","), cfg, a.seed, a.checkpoint)
 
     class H(BaseHTTPRequestHandler):
         def log_message(self, *args):
