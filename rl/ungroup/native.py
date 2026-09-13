@@ -109,9 +109,9 @@ SEAT_NAMES = {"policy": SEAT_EXTERNAL, "snapshot": SEAT_EXTERNAL2, "solo": SEAT_
 PRESETS = {
     "legacy": {},
     "crown": dict(crown=1),
-    "bloom": dict(bloom_rate=0.1, seed_rate=0.15, seed_floor=0.05, bloom_cap=6.0),
-    "life": dict(crown=1, brand=1, bloom_rate=0.1, seed_rate=0.15, seed_floor=0.05, bloom_cap=6.0),
-    "series": dict(crown=1, brand=1, bloom_rate=0.1, seed_rate=0.15, seed_floor=0.05, bloom_cap=6.0, persist=1),
+    "bloom": dict(bloom_rate=0.1, seed_rate=0.15, seed_floor=0.05, bloom_cap=8.0),
+    "life": dict(crown=1, brand=1, bloom_rate=0.1, seed_rate=0.15, seed_floor=0.05, bloom_cap=8.0),
+    "series": dict(crown=1, brand=1, bloom_rate=0.1, seed_rate=0.15, seed_floor=0.05, bloom_cap=8.0, persist=1),
 }
 
 
@@ -120,7 +120,7 @@ def preset(name, **overrides):
     kw = dict(PRESETS[name])
     kw.update(overrides)
     if kw.get("bloom_rate", 0) > 0 and "bloom_cap" not in overrides:
-        kw["bloom_cap"] = float(kw.get("n_players", 6))
+        kw["bloom_cap"] = float(kw.get("n_players", 6) + 2)   # K = players + 2 keeps six loyal 0.04 above six bail under the crown
     return Config(**kw)
 SEAT_LABEL = {v: k for k, v in SEAT_NAMES.items()}
 TRAINING_BOTS = ["solo", "bail", "loyal"]

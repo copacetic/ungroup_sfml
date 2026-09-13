@@ -96,3 +96,22 @@ Models in `rl/models/`: `v2_candidate.pt` and `v2_strong.pt` were trained under 
 were trained after the 7 September changes (rammer stunned longer than its victim, group bank bonus).
 Checkpoints carry their own config, so evaluating an old model runs it under the current core's rules
 with the old model's constants.
+
+## v3 rule package (September 2026): crown, bloom, brand, persistent ledger
+
+The package from `docs/SKILL_CEILING.md` section 6 is implemented in the canonical core as `Config` fields
+that default to off, so the legacy ladder reproduces exactly. Named rule sets in `rl/ungroup/native.py`:
+
+| Preset | Fields | What changes |
+| --- | --- | --- |
+| `legacy` | none | the v2 rules |
+| `crown` | `crown=1, head_vest=10` | a group's pool pays out only at the pad of its head, the lowest-progress member bonded to everyone for 10 s |
+| `bloom` | `bloom_rate=0.1, seed_rate=0.15, seed_floor=0.05, bloom_cap=8` | mines grow logistically toward K = players + 2 and are reseeded by live ring neighbours, so they empty and regrow in cycles |
+| `life` | crown + bloom + `brand=1` | plus a public betrayal mark on leavers (decays, spreads at merges, redeemed by banking for partners) that the loyal bot shuns |
+| `series` | life + `persist=1` | the pairwise ledger survives between rounds (halved each round) so reputations carry over |
+
+Every v2 tool takes `--preset` (`ladder_native.py`, `train_v2.py`, `play_server.py`), `--set` still overrides
+single fields, and `rl/series.py` plays consecutive rounds with the same seats. The new `grudge` bot plays
+loyal but refuses anyone who publicly left a partner in the last 500 s. The observation gains two features
+(is-head, brand) per own block and per other slot; checkpoints trained before the package load with
+`obs_legacy=1` and keep their layout, so `rl/models/v8_300.pt` still runs, blind to the new state.
