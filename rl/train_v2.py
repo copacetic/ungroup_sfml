@@ -41,7 +41,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ungroup.native import (HELDOUT_BOTS, MAX_SLOTS, N_DR, PRESETS, SEAT_BAIL, SEAT_EXTERNAL, SEAT_EXTERNAL2, SEAT_NAMES, preset,  # noqa: E402
                             TRAINING_BOTS, TYPES, Config, NativeBatch)
 
-ACTION_NVEC = (9, 2, 2, 5)
+ACTION_NVEC = (9, 2, 2, 5)          # direct steering: move 0 stop, 1-8 directions, 9 keep
+MACRO_NVEC = (24, 2, 2, 5)          # macro steering: + 10-17 mine, 18 own pad, 19 head's pad, 20-23 nearest bodies
+MACRO_BASE = 10
 OWN_DIM = 33 + N_DR + 2   # v3 layout: + is_head, brand
 OTHER_DIM = 22 + 2
 OWN_DIM_LEGACY = 33 + N_DR
@@ -63,11 +65,13 @@ def ortho(layer, gain=math.sqrt(2)):
 
 
 class Policy(nn.Module):
-    def __init__(self, obs_dim, n_mines=8, hidden=256, ent=64, max_group=6, own_dim=OWN_DIM, other_dim=OTHER_DIM):
+    def __init__(self, obs_dim, n_mines=8, hidden=256, ent=64, max_group=6, own_dim=OWN_DIM, other_dim=OTHER_DIM, nvec=ACTION_NVEC):
         super().__init__()
         self.obs_dim = obs_dim
         self.n_mines = n_mines
         self.max_group = max_group
+        self.nvec = tuple(nvec)
+        self.decide_every = 6
         self.own_dim, self.other_dim = own_dim, other_dim
         self.own = nn.Sequential(ortho(nn.Linear(own_dim, 128)), nn.ReLU())
         self.oth = nn.Sequential(ortho(nn.Linear(other_dim, ent)), nn.ReLU(), ortho(nn.Linear(ent, ent)), nn.ReLU())
@@ -76,7 +80,7 @@ class Policy(nn.Module):
         tin = 128 + 3 * ent + 64 + 32
         self.trunk = nn.Sequential(ortho(nn.Linear(tin, hidden)), nn.LayerNorm(hidden), nn.ReLU(),
                                    ortho(nn.Linear(hidden, hidden)), nn.LayerNorm(hidden), nn.ReLU())
-        self.heads = nn.ModuleList([ortho(nn.Linear(hidden, n), gain=0.01) for n in ACTION_NVEC])
+        self.heads = nn.ModuleList([ortho(nn.Linear(hidden, n), gain=0.01) for n in self.nvec])
         assert obs_dim == own_dim + MAX_SLOTS * other_dim + n_mines * MINE_DIM + N_PICKUPS * PICK_DIM, obs_dim
 
     def split(self, obs):
@@ -114,7 +118,22 @@ class Policy(nn.Module):
         m_leave[solo, 1] = float("-inf")            # cannot leave when solo
         m_intent = torch.zeros(obs.shape[0], 5, device=obs.device)
         m_intent[~solo, 1:] = float("-inf")         # intent locked while grouped
-        return [None, None, m_leave, m_intent]
+        m_move = None
+        if self.nvec[0] > MACRO_BASE:
+            # macro policies choose targets only: no direct steering, no dead or absent mines, no absent bodies
+            m_move = torch.zeros(obs.shape[0], self.nvec[0], device=obs.device)
+            m_move[:, 1:MACRO_BASE] = float("-inf")
+            mine0 = self.own_dim + MAX_SLOTS * self.other_dim
+            for m in range(8):
+                if m < self.n_mines:
+                    dead = obs[:, mine0 + m * MINE_DIM + 7] < 0.5
+                    m_move[dead, MACRO_BASE + m] = float("-inf")
+                else:
+                    m_move[:, MACRO_BASE + m] = float("-inf")
+            for k in range(4):
+                absent = obs[:, self.own_dim + k * self.other_dim + IDX_OTHER_PRESENT] < 0.5
+                m_move[absent, MACRO_BASE + 10 + k] = float("-inf")
+        return [m_move, None, m_leave, m_intent]
 
     def forward(self, obs):
         h = self.features(obs)
@@ -187,7 +206,7 @@ def git_sha():
 def save_checkpoint(path, policy, critic, cfg, samples, extra=None):
     torch.save({"arch": ARCH, "policy": policy.state_dict(), "critic": critic.state_dict() if critic else None,
                 "config": asdict(cfg), "obs_dim": policy.obs_dim, "n_mines": policy.n_mines, "max_group": policy.max_group,
-                "own_dim": policy.own_dim, "other_dim": policy.other_dim,
+                "own_dim": policy.own_dim, "other_dim": policy.other_dim, "action_nvec": list(policy.nvec), "decide_every": policy.decide_every,
                 "samples": samples, "git": git_sha(), "extra": extra or {}}, path)
 
 
@@ -200,8 +219,10 @@ def load_checkpoint(path):
         conf["obs_legacy"] = 1
     cfg = Config(**conf)
     policy = Policy(ck["obs_dim"], n_mines=ck["n_mines"], max_group=ck["max_group"],
-                    own_dim=ck.get("own_dim", OWN_DIM_LEGACY), other_dim=ck.get("other_dim", OTHER_DIM_LEGACY))
+                    own_dim=ck.get("own_dim", OWN_DIM_LEGACY), other_dim=ck.get("other_dim", OTHER_DIM_LEGACY),
+                    nvec=tuple(ck.get("action_nvec", ACTION_NVEC)))
     policy.load_state_dict(ck["policy"])
+    policy.decide_every = int(ck.get("decide_every", 6))
     policy.eval()
     return policy, cfg, ck
 
@@ -246,6 +267,8 @@ def masked_smooth_ce(logits, target, smooth):
 def warmup(policy, batch, args, log):
     """DAgger from the bail bot: labels come from ugb_bot_actions for every external seat."""
     E, n, D = batch.E, batch.n, batch.obs_dim
+    experts = [b for b in args.warmup_bots.split(",") if b]
+    expert_of = [experts[e % len(experts)] for e in range(E)]
     for e in range(E):
         seats = ["policy"] * n
         for i in range(n):
@@ -258,7 +281,7 @@ def warmup(policy, batch, args, log):
     for it in range(args.warmup_iters):
         steps = args.warmup_steps
         for t in range(steps):
-            labels = np.stack([batch.bot_actions(e, "bail") for e in range(E)])  # (E, n, 4)
+            labels = np.stack([batch.bot_actions(e, expert_of[e], macro=args.macro) for e in range(E)])  # (E, n, 4)
             if it == 0:
                 act = labels.copy()
             else:
@@ -270,6 +293,11 @@ def warmup(policy, batch, args, log):
             solo = flat_obs[:, IDX_GROUP_N] * batch.cfg.max_group < 1.5
             lab[~solo, 3] = 0
             lab[solo, 2] = 0
+            if args.macro:  # a label on a masked target (a dead mine, an absent body) becomes 'stop'
+                with torch.no_grad():
+                    mm = policy.masks(torch.from_numpy(flat_obs))[0].numpy()
+                bad = mm[np.arange(len(lab)), lab[:, 0]] < -1e9
+                lab[bad, 0] = 0
             X.append(flat_obs.copy())
             Y.append(lab)
             obs, _, _, _ = batch.step(act)
@@ -317,6 +345,9 @@ def main():
     ap.add_argument("--players", type=int, default=6)
     ap.add_argument("--dr", action="store_true", help="randomise rule constants per game")
     ap.add_argument("--warmup-iters", type=int, default=4)
+    ap.add_argument("--warmup-bots", default="bail", help="comma list of scripted experts for the warm start, assigned per env")
+    ap.add_argument("--macro", action="store_true", help="macro movement head: choose a target (mine, pad, body) instead of a direction")
+    ap.add_argument("--decide-every", type=int, default=0, help="physics ticks per decision (default 6, or 15 with --macro)")
     ap.add_argument("--warmup-steps", type=int, default=400)
     ap.add_argument("--warmup-epochs", type=int, default=10)
     ap.add_argument("--warmup-smooth", type=float, default=0.25)
@@ -350,7 +381,8 @@ def main():
         print(msg, flush=True)
         logf.write(msg + "\n"); logf.flush()
 
-    batch = NativeBatch(args.envs, cfg, seed=args.seed * 100000 + 1, decide_every=6)
+    decide_every = args.decide_every or (15 if args.macro else 6)
+    batch = NativeBatch(args.envs, cfg, seed=args.seed * 100000 + 1, decide_every=decide_every)
     if args.dr:
         lo, hi = dr_ranges(cfg)
         batch.set_cfg_range(lo, hi)
@@ -358,7 +390,8 @@ def main():
             batch.reset(e)
     E, n, D, P = batch.E, batch.n, batch.obs_dim, batch.priv_dim
     ent_coef = [float(x) for x in args.entropy.split(",")]
-    ent_norm = [math.log(k) for k in ACTION_NVEC]
+    nvec = MACRO_NVEC if args.macro else ACTION_NVEC
+    ent_norm = [math.log(k) for k in nvec]
 
     critic = Critic(D, P)
     samples_done = 0
@@ -370,7 +403,8 @@ def main():
         samples_done = ck.get("samples", 0)
         log(f"resumed {args.resume} ({samples_done} samples)")
     else:
-        policy = Policy(D, n_mines=cfg.n_mines, max_group=cfg.max_group)
+        policy = Policy(D, n_mines=cfg.n_mines, max_group=cfg.max_group, nvec=nvec)
+        policy.decide_every = decide_every
         if args.warmup_iters > 0:
             warmup(policy, batch, args, log)
             save_checkpoint(os.path.join(args.out, "warmup.pt"), policy, None, cfg, 0)

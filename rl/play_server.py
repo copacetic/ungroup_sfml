@@ -134,7 +134,7 @@ async def main():
         from train_v2 import load_checkpoint
         policy, _, _ = load_checkpoint(args.checkpoint)
     seats = ["human"] * args.humans + ["policy"] * (args.agents if policy else 0) + [b for b in args.bots.split(",") if b]
-    room = Room(cfg, seats, policy)
+    room = Room(cfg, seats, policy, decide_every=getattr(policy, "decide_every", 6))
     os.makedirs(args.replays, exist_ok=True)
     clients = {}   # websocket -> seat index
     free = [i for i, s in enumerate(seats) if s == "human"]

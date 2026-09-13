@@ -120,7 +120,7 @@ def check(path, games=16, seed=9000, baseline=None, best=None, min_update=200, r
             a, _ = policy.act(torch.from_numpy(obs))
         return a.numpy()
 
-    rep = record_game(act, ["policy"] * 6, cfg.replace(n_players=6), seed=seed + 777)
+    rep = record_game(act, ["policy"] * 6, cfg.replace(n_players=6), seed=seed + 777, decide_every=getattr(policy, "decide_every", 6))
     row["ram"], row["clash"], row["bump"] = classify_spills(rep)
     row["p_join_solo"], row["p_leave_grouped"] = heads_at(run_dir or os.path.dirname(path), update)
 

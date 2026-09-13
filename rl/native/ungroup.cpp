@@ -60,6 +60,13 @@ constexpr int MAX_SLOTS = 8;      // other-player slots in the observation (near
 constexpr int MAX_PLAYERS = 32;   // hard cap on seats (pairwise history arrays)
 constexpr int N_PICKUPS_OBS = 4;
 constexpr int N_DR = 4;           // randomised constants exposed in the observation
+// Macro movement actions (move >= MACRO_BASE): the core steers toward a target every tick until the next
+// decision. 10..17 = mine m, 18 = own pad, 19 = the group head's pad (own pad when solo), 20..23 = the k-th
+// nearest other player's body (the observation's slot order). Legacy moves 0..9 still work.
+constexpr int MACRO_BASE = 10;
+constexpr int MACRO_MINES = 8;
+constexpr int MACRO_BODIES = 4;
+constexpr int MOVE_CLASSES = MACRO_BASE + MACRO_MINES + 2 + MACRO_BODIES;  // 24
 constexpr double PI = 3.14159265358979323846;
 
 // Config array layout shared with rl/ungroup/native.py (CFG_FIELDS). Keep in sync.
@@ -165,6 +172,7 @@ struct Player {
     Vec dir;
     double leave_timer = -1.0;   // seconds remaining, < 0 when not leaving
     double leave_last_req = -1e9; // time of the last leave=1 decision
+    int macro = -1;              // current macro movement target (>= MACRO_BASE) or -1 for direct steering
     double join_cooldown = 0;    // seconds until this player may merge again
     double group_since = 0;      // time the current membership started (t)
     double last_bank_t = 0;
@@ -354,9 +362,10 @@ struct Game {
         for (int i = 0; i < cfg.n_players; i++) {
             int move = act[i * 4], joinable = act[i * 4 + 1], leave = act[i * 4 + 2], intent = act[i * 4 + 3];
             Player& p = players[i];
-            if (move == 0) p.dir = {0, 0};
+            if (move == 0) { p.dir = {0, 0}; p.macro = -1; }
             else if (move == 9) { /* keep the direction set through set_direction (human seats) */ }
-            else { double a = 2 * PI * (move - 1) / 8; p.dir = {std::cos(a), std::sin(a)}; }
+            else if (move >= MACRO_BASE) { p.macro = move; steer_macro(i); }
+            else { double a = 2 * PI * (move - 1) / 8; p.dir = {std::cos(a), std::sin(a)}; p.macro = -1; }
             p.joinable = joinable != 0;
             int bi = body_index(i);
             int n = bodies[bi].n();
@@ -377,11 +386,77 @@ struct Game {
         players[i].dir = n < 1e-6 ? Vec(0, 0) : Vec(dx / n, dy / n);
     }
 
+    // ------------------------------------------------------------ macro targets
+
+    // Other players sorted by body distance from player i (stable on index), the observation's slot order.
+    std::vector<int> nearest_others(int i) const {
+        Vec pos = bodies[body_index(i)].pos;
+        std::vector<std::pair<double, int>> order;
+        for (int j = 0; j < cfg.n_players; j++) if (j != i) order.push_back({(bodies[body_index(j)].pos - pos).norm(), j});
+        std::stable_sort(order.begin(), order.end(), [](const std::pair<double, int>& a, const std::pair<double, int>& b) { return a.first < b.first; });
+        std::vector<int> out;
+        for (auto& o : order) out.push_back(o.second);
+        return out;
+    }
+
+    bool macro_target(int i, int m, Vec* out) const {
+        int k = m - MACRO_BASE;
+        if (k < 0) return false;
+        if (k < MACRO_MINES) { if (k >= cfg.n_mines) return false; *out = mine_pos[k]; return true; }
+        k -= MACRO_MINES;
+        if (k == 0) { *out = pad_pos(i); return true; }
+        if (k == 1) { const Body& b = bodies[body_index(i)]; *out = pad_pos(b.n() > 1 && b.head >= 0 ? b.head : i); return true; }
+        k -= 2;
+        if (k < MACRO_BODIES) {
+            std::vector<int> others = nearest_others(i);
+            if (k >= (int)others.size()) return false;
+            *out = bodies[body_index(others[k])].pos;
+            return true;
+        }
+        return false;
+    }
+
+    void steer_macro(int i) {
+        Player& p = players[i];
+        if (p.macro < 0) return;
+        Vec tgt;
+        if (!macro_target(i, p.macro, &tgt)) { p.dir = {0, 0}; return; }
+        Vec d = tgt - bodies[body_index(i)].pos;
+        double n = d.norm();
+        p.dir = n < 1e-6 ? Vec(0, 0) : d * (1.0 / n);
+    }
+
+    void steer_macros() { for (int i = 0; i < cfg.n_players; i++) if (players[i].macro >= 0) steer_macro(i); }
+
+    // The macro class a scripted bot's target corresponds to (DAgger labels for macro policies).
+    int macro_label(int i) const {
+        if (!bot_has) return 0;
+        for (int m = 0; m < std::min(cfg.n_mines, MACRO_MINES); m++)
+            if ((bot_tgt - mine_pos[m]).norm() < 1e-9) return MACRO_BASE + m;
+        if ((bot_tgt - pad_pos(i)).norm() < 1e-9) return MACRO_BASE + MACRO_MINES;
+        const Body& b = bodies[body_index(i)];
+        if (b.n() > 1 && b.head >= 0 && (bot_tgt - pad_pos(b.head)).norm() < 1e-9) return MACRO_BASE + MACRO_MINES + 1;
+        for (int j : b.members) if (j != i && (bot_tgt - pad_pos(j)).norm() < 1e-9) return MACRO_BASE + MACRO_MINES + 1;  // a partner's pad: closest class
+        std::vector<int> others = nearest_others(i);
+        int best = -1;
+        double bd = 0.15;
+        for (int k = 0; k < std::min((int)others.size(), MACRO_BODIES); k++) {
+            double d = (bot_tgt - bodies[body_index(others[k])].pos).norm();
+            if (d < bd) { bd = d; best = k; }
+        }
+        if (best >= 0) return MACRO_BASE + MACRO_MINES + 2 + best;
+        // anything else (a pickup, a predicted position): the nearest mine to the target
+        int bm = -1; double bmd = 1e9;
+        for (int m = 0; m < std::min(cfg.n_mines, MACRO_MINES); m++) { double d = (bot_tgt - mine_pos[m]).norm(); if (d < bmd) { bmd = d; bm = m; } }
+        return bm >= 0 && bmd < 0.2 ? MACRO_BASE + bm : 0;
+    }
+
     // --------------------------------------------------------------- tick
 
     void tick() {
         if (done) return;
         update_arena();
+        steer_macros();
         move_bodies();
         update_timers();
         update_leaving();
@@ -946,6 +1021,9 @@ struct Game {
 
     // ---------------------------------------------------------------- bots
 
+    mutable Vec bot_tgt;        // the last bot's movement target (for macro labels)
+    mutable bool bot_has = false;
+
     int nearest_mine(Vec pos, const bool* types) const {
         int best = -1;
         double bd = 1e9;
@@ -1030,6 +1108,7 @@ struct Game {
             target = mine_target(i, b.pos, &has);
             if (!has && b.pool_total() > 0) { target = pad_pos(i); has = true; }
         }
+        bot_tgt = target; bot_has = has;
         act[0] = has ? direction_to_move(target - b.pos) : 0;
         act[1] = 0;
         act[2] = b.n() > 1 ? 1 : 0;
@@ -1061,6 +1140,7 @@ struct Game {
             if (b.n() > 1) target = group_mine_target(b, &has); else target = mine_target(i, b.pos, &has);
             if (!has) target = my_pad;
         }
+        bot_tgt = target; bot_has = true;
         act[0] = direction_to_move(target - b.pos);
         act[1] = joinable;
         act[2] = leave;
@@ -1093,6 +1173,7 @@ struct Game {
         int joinable = 1;
         if (cfg.brand)  // shun: close the door while a branded body is within reach
             for (const Body& o : bodies) if (&o != &b && body_branded(o) && (o.pos - b.pos).norm() < 0.25 + radius(b.n()) + radius(o.n())) joinable = 0;
+        bot_tgt = target; bot_has = true;
         act[0] = direction_to_move(target - b.pos);
         act[1] = joinable;
         act[2] = 0;
@@ -1128,6 +1209,7 @@ struct Game {
             if (b.n() > 1) target = group_mine_target(b, &has); else target = mine_target(i, b.pos, &has);
             if (!has) target = pad_pos(i);
         }
+        bot_tgt = target; bot_has = true;
         act[0] = direction_to_move(target - b.pos);
         act[1] = joinable;
         act[2] = 0;
@@ -1151,6 +1233,7 @@ struct Game {
             if (b.n() > 1) target = group_mine_target(b, &has); else target = mine_target(i, b.pos, &has);
             if (!has) target = pad_pos(i);
         }
+        bot_tgt = target; bot_has = true;
         act[0] = direction_to_move(target - b.pos);
         act[1] = 1;
         act[2] = 0;
@@ -1175,6 +1258,7 @@ struct Game {
             }
         }
         if (!has) { target = mine_target(i, b.pos, &has); if (!has) target = pad_pos(i); }
+        bot_tgt = target; bot_has = true;
         act[0] = direction_to_move(target - b.pos);
         act[1] = 0;
         act[2] = b.n() > 1 ? 1 : 0;
@@ -1327,6 +1411,13 @@ void ugb_bot_actions(void* h, int env, int seat_type, int* out) {
     Game& g = ((Batch*)h)->games[env];
     for (int i = 0; i < g.cfg.n_players; i++) g.bot_action(seat_type, i, out + i * 4);
 }
+
+// Same, with the movement column expressed as a macro target class (for macro policies).
+void ugb_bot_actions_macro(void* h, int env, int seat_type, int* out) {
+    Game& g = ((Batch*)h)->games[env];
+    for (int i = 0; i < g.cfg.n_players; i++) { g.bot_action(seat_type, i, out + i * 4); out[i * 4] = g.macro_label(i); }
+}
+int ugb_move_classes() { return MOVE_CLASSES; }
 
 void ugb_set_direction(void* h, int env, int seat, double dx, double dy) {
     ((Batch*)h)->games[env].set_direction(seat, dx, dy);

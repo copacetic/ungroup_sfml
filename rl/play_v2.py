@@ -28,7 +28,7 @@ torch.set_num_threads(2)
 def play(policy, seats, games, seed, cfg, deterministic=False):
     n = len(seats)
     cfg = cfg.replace(n_players=n)
-    b = NativeBatch(games, cfg, seed=seed)
+    b = NativeBatch(games, cfg, seed=seed, decide_every=getattr(policy, "decide_every", 6))
     for e in range(games):
         b.set_seats(e, seats)
         b.reset(e, seed + e)
@@ -94,7 +94,7 @@ def cmd_record(a):
 
     best, best_score = None, -1e9
     for k in range(a.tries):
-        rep = record_game(act, seats, cfg.replace(n_players=len(seats)), seed=a.seed + k, names=names,
+        rep = record_game(act, seats, cfg.replace(n_players=len(seats)), seed=a.seed + k, names=names, decide_every=getattr(policy, "decide_every", 6),
                           meta={"checkpoint": os.path.basename(a.checkpoint), "samples": ck.get("samples", 0)})
         frames = rep["frames"]
         kinds = {}

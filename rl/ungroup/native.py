@@ -20,6 +20,9 @@ LIB = os.path.join(NATIVE_DIR, "libungroup.so")
 
 TYPES = 4
 MAX_SLOTS = 8
+# Movement classes: 0 stop, 1-8 directions, 9 keep; macro targets 10-17 mine, 18 own pad, 19 head's pad, 20-23 nearest bodies
+MOVE_CLASSES = 24
+MACRO_BASE = 10
 N_DR = 4
 
 
@@ -152,6 +155,8 @@ def _load():
     lib.ugb_observe.argtypes = [ctypes.c_void_p, P(ctypes.c_float)]
     lib.ugb_observe_priv.argtypes = [ctypes.c_void_p, P(ctypes.c_float)]
     lib.ugb_bot_actions.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, P(ctypes.c_int)]
+    lib.ugb_bot_actions_macro.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, P(ctypes.c_int)]
+    lib.ugb_move_classes.restype = ctypes.c_int
     lib.ugb_set_direction.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_double, ctypes.c_double]
     lib.ugb_cfg.argtypes = [ctypes.c_void_p, ctypes.c_int, P(ctypes.c_double)]
     lib.ugb_step.argtypes = [ctypes.c_void_p, P(ctypes.c_int), P(ctypes.c_float), P(ctypes.c_ubyte), P(ctypes.c_float),
@@ -234,9 +239,11 @@ class NativeBatch:
         self.lib.ugb_observe_priv(self.h, _ptr(self._priv, ctypes.c_float))
         return self._priv.copy()
 
-    def bot_actions(self, env, seat_type):
+    def bot_actions(self, env, seat_type, macro=False):
+        """What a scripted bot would do in every seat; macro=True expresses movement as a target class."""
         st = SEAT_NAMES[seat_type] if isinstance(seat_type, str) else int(seat_type)
-        self.lib.ugb_bot_actions(self.h, env, st, _ptr(self._act, ctypes.c_int))
+        fn = self.lib.ugb_bot_actions_macro if macro else self.lib.ugb_bot_actions
+        fn(self.h, env, st, _ptr(self._act, ctypes.c_int))
         return self._act.copy()
 
     def set_direction(self, env, seat, dx, dy):
