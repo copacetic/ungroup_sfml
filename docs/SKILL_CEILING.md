@@ -383,6 +383,15 @@ five bails only climbs from 0.02 to 0.24, so the invasion threshold is two seats
 full `series` preset the crown already lifts two grudges above four bails in round 0 (0.815 vs 0.685), so the
 ledger's own effect is only visible on the legacy rules, and 5 grudge + 1 bail keeps the bail at 0.60 to 0.62.
 
-Open: the trained agents need retraining under the package (run `rl/checkpoints/v9` with the movement
-anchor and the health checker), and the clover shrink was not built.
+First agent under the package (`rl/models/v9_150.pt`, life preset, movement anchor, 2.8 M samples, 32 paired
+rounds): 0.656 vs 0.660 against bail (a tie; the 16-round health check had read +0.06), 0.637 vs 0.626 against
+solo, 0.608 vs 0.814 against loyal, 0.601 vs 0.079 against the kidnapper, 0.523 vs 0.434 against the rammer,
+self-play 0.661 with 11 s alliances and five spills per round. Two things the rules changed for agents: the
+bail baseline moved from 0.62 to 0.69, so parity is a higher bar than before, and in the mixed lobby the
+kidnapper scores 0.695 with 41 percent of the wins because it arrives poor, is crowned, and the group
+banks at its pad. The crown rescues the poorest member without asking why they are poor; a dragging
+member should not be crownable, which is a rule to add before humans meet it.
+
+Open: the clover shrink was not built, and the agents are at parity with the scripted bots on the new rules
+rather than ahead of them.
 
