@@ -474,6 +474,61 @@ export class Host {
 }
 
 // ============================================================================================== Client
+// Smooth playback of the host's own frames for the host's screen. The simulation runs at 30 Hz on a timer
+// while the display refreshes at 60 Hz or more, so drawing the newest frame makes bodies advance every
+// other frame (and the chase camera, which moves every frame, makes the jump visible). LocalView stamps
+// each frame on arrival, keeps a short buffer and renders LOCAL_LAG_MS behind real time, interpolating
+// between the two frames around the render time; events are delivered once, when the render time passes
+// their frame, so a spark shows where the bodies are drawn.
+export const LOCAL_LAG_MS = 50;
+export class LocalView {
+  constructor(opts = {}) {
+    this.now = opts.now || (() => (typeof performance !== 'undefined' ? performance.now() : Date.now()));
+    this.lag = opts.lag != null ? opts.lag : LOCAL_LAG_MS;
+    this.reset();
+  }
+  reset() { this.buf = []; this.offset = null; this._clockT = null; this._orphan = []; }
+  push(frame, nowMs = this.now()) {
+    const t = frame.t;
+    const off = nowMs - t * 1000;           // real time of game time zero, as seen by this frame
+    if (this.offset === null || off < this.offset - 250 || off > this.offset + 1000) { this.offset = off; this._clockT = null; }   // a new round or a stalled timer: resync
+    else this.offset += (off - this.offset) * 0.1;
+    const events = Array.isArray(frame.events) ? frame.events : [];
+    const last = this.buf[this.buf.length - 1];
+    if (last && t <= last.t) { if (events.length) this._orphan.push(...events); return; }
+    this.buf.push({ t, frame, events, emitted: false });
+    while (this.buf.length > 12) { const old = this.buf.shift(); if (!old.emitted) this._orphan.push(...old.events); }
+  }
+  view(nowMs = this.now()) {
+    const buf = this.buf;
+    if (!buf.length || this.offset === null) return null;
+    const newest = buf[buf.length - 1];
+    let renderT = (nowMs - this.offset - this.lag) / 1000;
+    if (renderT > newest.t + 0.05) renderT = newest.t + 0.05;               // the timer stalled: hold near the newest frame
+    if (this._clockT !== null && renderT < this._clockT) renderT = this._clockT;   // never step backwards
+    this._clockT = renderT;
+    let frame;
+    if (renderT >= newest.t) {
+      const dt = renderT - newest.t;
+      frame = dt > 0 ? extrapolateFrame(newest.frame, dt) : cloneFrame(newest.frame);
+    } else if (renderT <= buf[0].t) frame = cloneFrame(buf[0].frame);
+    else {
+      let i = buf.length - 2;
+      while (i > 0 && buf[i].t > renderT) i--;
+      const a = buf[i], b = buf[i + 1];
+      const span = b.t - a.t;
+      frame = interpolateFrame(a.frame, b.frame, span > 0 ? (renderT - a.t) / span : 1);
+    }
+    frame.t = renderT;
+    const events = this._orphan.length ? this._orphan.splice(0) : [];
+    for (const s of buf) if (!s.emitted && s.t <= renderT + 1e-9) { s.emitted = true; if (s.events.length) events.push(...s.events); }
+    frame.events = events;
+    frame.tick = newest.frame.tick;
+    while (buf.length > 2 && buf[1].t <= renderT && buf[0].emitted) buf.shift();
+    return frame;
+  }
+}
+
 // opts = { name, token, now, setInterval, clearInterval, manual, lag (ms, default 100), maxExtrap (ms, default 150) }
 // token: keep it in sessionStorage and pass it back after a refresh to get the same seat back.
 export class Client {

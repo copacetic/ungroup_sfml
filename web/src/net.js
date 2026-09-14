@@ -41,6 +41,14 @@ export const TRYSTERO_STRATEGIES = Object.freeze([
 ]);
 export const TRYSTERO_IMPORT = TRYSTERO_STRATEGIES[0].url;
 export const DEFAULT_APP_ID = 'ungroup-web-v1';
+// ICE servers: Google's STUN plus the public Open Relay TURN service (openrelay.metered.ca, free, static
+// credentials published by its operator), so peers behind symmetric NATs and phone networks still connect.
+export const DEFAULT_RTC_CONFIG = Object.freeze({
+  iceServers: [
+    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+    { urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443', 'turn:openrelay.metered.ca:443?transport=tcp', 'turns:openrelay.metered.ca:443'], username: 'openrelayproject', credential: 'openrelayproject' },
+  ],
+});
 
 const LOCAL_HEARTBEAT_MS = 2000;
 const LOCAL_TIMEOUT_MS = 6500;
@@ -154,11 +162,13 @@ export class LocalTransport extends TransportBase {
 
 // ------------------------------------------------------------------------------------------------ rtc
 export class RtcTransport extends TransportBase {
-  // room: the Trystero room object; selfId: this peer's id
-  constructor(room, selfId, strategyName) {
+  // room: the Trystero room object; selfId: this peer's id; mod: the strategy module (for getRelaySockets)
+  constructor(room, selfId, strategyName, mod = null) {
     super(selfId);
     this.room = room;
     this.strategy = strategyName;
+    this.mod = mod;
+    this.kind = 'rtc';
     this._actions = new Map();
     const onJoin = (peerId) => this._addPeer(peerId);
     const onLeave = (peerId) => this._removePeer(peerId);
@@ -185,6 +195,20 @@ export class RtcTransport extends TransportBase {
     const a = this._action(channel);
     if (!a.listening) { a.listening = true; a.listen((data, peerId) => this._dispatch(channel, data, peerId)); }
   }
+  // Signalling health: how many tracker/relay sockets the strategy keeps open (null when the module does
+  // not expose them) and the peer count.
+  status() {
+    const out = { strategy: this.strategy, peers: this._peers.size, relays: null, relaysOpen: null };
+    try {
+      const fn = this.mod && this.mod.getRelaySockets;
+      if (typeof fn === 'function') {
+        const list = Object.values(fn() || {});
+        out.relays = list.length;
+        out.relaysOpen = list.filter((w) => w && w.readyState === 1).length;
+      }
+    } catch (e) { /* not fatal */ }
+    return out;
+  }
   send(channel, obj, toId = null) {
     if (this.closed) return;
     if (toId !== null && !this._peers.has(toId)) return;
@@ -200,6 +224,78 @@ export class RtcTransport extends TransportBase {
   }
 }
 
+// ----------------------------------------------------------------------------------------------- dual
+// WebRTC for other devices plus the BroadcastChannel for the other tabs of this browser, under one peer
+// id. Tabs of the same browser find each other at once even when no signalling tracker answers; other
+// devices arrive through Trystero. A peer reachable on the local channel is spoken to there only, so
+// nothing is delivered twice.
+export class DualTransport extends TransportBase {
+  constructor(local, rtc = null) {
+    super(local.id);
+    this.local = local;
+    this.rtc = null;
+    this.kind = 'dual';
+    this.rtcError = null;
+    this._route = new Map();   // peer id -> 'local' | 'rtc'
+    this._subs = new Set();    // 'local:channel' / 'rtc:channel' already forwarded
+    this._wire(local, 'local');
+    if (rtc) this.attachRtc(rtc);
+  }
+  attachRtc(rtc) {
+    if (this.closed) { try { rtc.close(); } catch (e) { /* ignore */ } return; }
+    this.rtc = rtc;
+    this._wire(rtc, 'rtc');
+    for (const ch of this._handlers.keys()) this._forward(rtc, 'rtc', ch);
+  }
+  _wire(t, kind) {
+    t.onPeer((id) => {
+      const cur = this._route.get(id);
+      if (kind === 'local' || !cur) this._route.set(id, kind);
+      this._addPeer(id);
+    });
+    t.onLeave((id) => {
+      if (this._route.get(id) !== kind) return;
+      const other = kind === 'local' ? this.rtc : this.local;
+      if (other && other.peers().includes(id)) this._route.set(id, kind === 'local' ? 'rtc' : 'local');
+      else { this._route.delete(id); this._removePeer(id); }
+    });
+  }
+  _forward(t, kind, channel) {
+    const key = kind + ':' + channel;
+    if (this._subs.has(key)) return;
+    this._subs.add(key);
+    t.on(channel, (obj, from) => { if (this._route.get(from) === kind || !this._route.has(from)) this._dispatch(channel, obj, from); });
+  }
+  _channelAdded(channel) {
+    this._forward(this.local, 'local', channel);
+    if (this.rtc) this._forward(this.rtc, 'rtc', channel);
+  }
+  send(channel, obj, toId = null) {
+    if (this.closed) return;
+    if (toId !== null) {
+      const route = this._route.get(toId);
+      if (route === 'local') this.local.send(channel, obj, toId);
+      else if (route === 'rtc' && this.rtc) this.rtc.send(channel, obj, toId);
+      return;
+    }
+    this.local.send(channel, obj, null);
+    if (this.rtc) for (const p of this.rtc.peers()) if (this._route.get(p) === 'rtc') this.rtc.send(channel, obj, p);
+  }
+  status() {
+    const st = this.rtc ? this.rtc.status() : { strategy: null, peers: 0, relays: null, relaysOpen: null };
+    st.localPeers = this.local.peers().length;
+    st.peers = this._peers.size;
+    st.rtcError = this.rtcError ? String(this.rtcError.message || this.rtcError) : null;
+    return st;
+  }
+  close() {
+    if (this.closed) return;
+    super.close();
+    try { this.local.close(); } catch (e) { /* ignore */ }
+    if (this.rtc) { try { this.rtc.close(); } catch (e) { /* ignore */ } }
+  }
+}
+
 async function loadTrystero(strategies) {
   let lastErr = null;
   for (const s of strategies) {
@@ -212,18 +308,25 @@ async function loadTrystero(strategies) {
   throw new Error('could not load Trystero from the CDN (' + (lastErr && lastErr.message) + ')');
 }
 
-// Factory. 'rtc' resolves once the signalling module is loaded (peers then appear asynchronously through
-// onPeer); 'local' resolves immediately.
-export async function createTransport({ kind = 'local', room, appId = DEFAULT_APP_ID, strategies = TRYSTERO_STRATEGIES, rtcConfig, password } = {}) {
+// Factory. 'local' is the BroadcastChannel alone. 'rtc' is a DualTransport: the BroadcastChannel plus
+// Trystero under Trystero's peer id (peers appear asynchronously through onPeer); when no strategy module
+// can be loaded it falls back to the BroadcastChannel alone with `rtcError` set, unless `strict` is on.
+// 'rtc-only' is the bare RtcTransport.
+export async function createTransport({ kind = 'local', room, appId = DEFAULT_APP_ID, strategies = TRYSTERO_STRATEGIES, rtcConfig = DEFAULT_RTC_CONFIG, password, strict = false, localOpts = {} } = {}) {
   if (!room) throw new Error('createTransport: room is required');
-  if (kind === 'local') return new LocalTransport(room);
-  if (kind === 'rtc') {
-    const { mod, strategy } = await loadTrystero(strategies);
+  if (kind === 'local') return new LocalTransport(room, localOpts);
+  if (kind === 'rtc' || kind === 'rtc-only') {
+    let loaded = null, err = null;
+    try { loaded = await loadTrystero(strategies); } catch (e) { err = e; if (strict || kind === 'rtc-only') throw e; }
+    if (!loaded) { const t = new DualTransport(new LocalTransport(room, localOpts)); t.rtcError = err; return t; }
+    const { mod, strategy } = loaded;
     const cfg = { appId };
     if (rtcConfig) cfg.rtcConfig = rtcConfig;
     if (password) cfg.password = password;
-    const trysteroRoom = mod.joinRoom(cfg, room);
-    return new RtcTransport(trysteroRoom, mod.selfId || randomId(), strategy);
+    const id = mod.selfId || randomId();
+    const rtc = new RtcTransport(mod.joinRoom(cfg, room), id, strategy, mod);
+    if (kind === 'rtc-only') return rtc;
+    return new DualTransport(new LocalTransport(room, Object.assign({}, localOpts, { id })), rtc);
   }
   throw new Error('unknown transport kind ' + kind);
 }

@@ -13,7 +13,7 @@ import { createRenderer, PALETTE_CSS } from './render.js';
 const FORCE_2D = /(^|[#&])2d(&|$)/.test(location.hash);   // #...&2d at load forces the canvas fallback renderer
 import { PRESETS } from './engine.js';
 import { createTransport } from './net.js';
-import { Host, Client, RESTART_DELAY_MS } from './session.js';
+import { Host, Client, LocalView, RESTART_DELAY_MS } from './session.js';
 
 const $ = (id) => document.getElementById(id);
 const BOT_TYPES = ['solo', 'bail', 'loyal', 'kidnap', 'rammer', 'grudge'];
@@ -337,7 +337,8 @@ function loop(now) {
   if (S.mode === 'client') {
     frame = S.client ? S.client.view(now) : null;
     if (frame) { S.frame = frame; S.frames++; ingestEvents(frame.events); }
-  } else frame = S.frame;
+  } else frame = (S.local && S.local.view(now)) || S.frame;
+  S.view = frame;   // what is on screen this frame (S.frame is the newest simulation state)
   if (!frame || !S.meta) return;
   if (S.pointer) pushInput(now);   // the body moves under a held pointer, so the direction changes
   S.renderer.draw({ frame, meta: S.meta, cfg: S.cfg, me: S.me, names: S.names, time: now / 1000, camera: (S.arena || S.me < 0) ? { mode: 'arena' } : undefined });
@@ -349,18 +350,16 @@ async function makeTransport(kind, room) {
   let t = null;
   if (kind === 'rtc') {
     setConn('connecting (rtc)...', 'warn');
-    try {
-      t = await createTransport({ kind: 'rtc', room });
-      S.kind = 'rtc';
-    } catch (e) {
-      console.warn('rtc transport failed', e);
-      S.rtcFallback = 'rtc unavailable, ';
-    }
+    // a DualTransport: WebRTC for other devices plus this browser's other tabs under one peer id; when the
+    // signalling module cannot load it is the tab channel alone
+    t = await createTransport({ kind: 'rtc', room });
+    if (t.rtc) S.kind = 'rtc';
+    else { console.warn('rtc transport failed', t.rtcError); S.rtcFallback = 'rtc unavailable, '; S.kind = 'local'; }
   }
   if (!t) { t = await createTransport({ kind: 'local', room }); S.kind = 'local'; }
   const status = () => {
     const n = t.peers().length;
-    const via = S.kind === 'rtc' ? 'rtc via ' + (t.strategy || t.strategyName || 'p2p') : (S.rtcFallback || '') + 'local (this browser)';
+    const via = S.kind === 'rtc' ? 'rtc via ' + (t.rtc ? t.rtc.strategy : 'p2p') + ' + this browser' : (S.rtcFallback || '') + 'local (this browser)';
     setConn(`${via} · ${n} peer${n === 1 ? '' : 's'}`, S.kind === 'rtc' && n === 0 ? 'warn' : 'ok');
   };
   t.onPeer(status); t.onLeave(status); status();
@@ -371,6 +370,25 @@ function linkFor(room) {
   const base = location.href.split('#')[0];
   return base + '#r=' + room + (S.kind === 'local' ? '&local' : '');
 }
+
+// The lobby's signalling line: which strategy, how many trackers answer, how many peers, and what to do
+// when nobody can be reached.
+function sigText() {
+  const t = S.transport;
+  if (!t) return '';
+  const st = typeof t.status === 'function' ? t.status() : { peers: t.peers().length };
+  const parts = [];
+  if (S.kind === 'rtc') {
+    parts.push(`signalling: ${st.strategy || 'p2p'}`);
+    if (st.relays != null) parts.push(`trackers ${st.relaysOpen}/${st.relays}`);
+  } else parts.push(S.rtcFallback ? 'signalling unavailable (' + (st.rtcError || 'no module') + '): this browser\'s tabs only' : 'this browser only');
+  parts.push(`${st.peers} peer${st.peers === 1 ? '' : 's'}`);
+  let hint = '';
+  if (S.kind === 'rtc' && st.relays != null && st.relaysOpen === 0 && (performance.now() - (S.transportAt || 0)) > 10000) hint = ' · no tracker answers yet: other devices cannot find this room until one does (a firewall or an ad blocker may block wss:// trackers); other tabs of this browser still can';
+  return parts.join(' · ') + hint;
+}
+function updateSig() { const el = $('sig'); if (!el) return; el.textContent = S.screen === 'lobby' ? sigText() : ''; }
+setInterval(updateSig, 2000);
 
 // ---------------------------------------------------------------------------------------------- lobby
 function renderLobby(l) {
@@ -416,7 +434,10 @@ function renderLobby(l) {
 function wireHost(host) {
   host.onLobby((l) => { S.lobby = l; renderLobby(l); });
   host.onStart((msg) => beginRound(msg, host.seatOf(host.id)));
-  host.onFrame((f) => { S.frame = f; S.frames++; ingestEvents(f.events); });
+  S.local = new LocalView();
+  // S.frame is the newest simulation state (input, panel, tests); the screen draws LocalView's
+  // interpolated frame a little behind it
+  host.onFrame((f) => { S.frame = f; S.frames++; ingestEvents(f.events); S.local.push(f); });
   host.onEnd((msg) => showEnd(msg));
 }
 function agentLoader(host) {
@@ -444,7 +465,7 @@ function agentLoader(host) {
 async function createRoom(settings, kind) {
   const room = randomCode();
   const t = await makeTransport(kind, room);
-  S.mode = 'host'; S.room = room; S.transport = t;
+  S.mode = 'host'; S.room = room; S.transport = t; S.transportAt = performance.now();
   const host = new Host(t, settings);
   host._loadAgent = agentLoader(host);   // sets game.decideEvery to the model's cadence once loaded
   S.host = host;
@@ -457,7 +478,7 @@ async function createRoom(settings, kind) {
 
 async function joinRoom(room, kind) {
   const t = await makeTransport(kind, room);
-  S.mode = 'client'; S.room = room; S.transport = t;
+  S.mode = 'client'; S.room = room; S.transport = t; S.transportAt = performance.now();
   // a per-tab token (kept across a refresh) lets the session reclaim this seat instead of spectating
   let token = null;
   try { token = sessionStorage.getItem('ungroup-token-' + room); } catch (_) { /* ignore */ }
@@ -471,7 +492,8 @@ async function joinRoom(room, kind) {
   c.onHostBack(() => { $('hostLeft').classList.add('hidden'); setConn(`${S.kind} · ${t.peers().length} peers`, 'ok'); });
   renderLobby(null);
   show('lobby');
-  setTimeout(() => { if (S.client === c && !c.lobby) $('notice').textContent = `no host found in room ${room} yet - is the host online, and did you use the host's link?`; }, 8000);
+  setTimeout(() => { if (S.client === c && !c.lobby) { $('notice').textContent = `no host found in room ${room} yet - is the host online, and did you use the host's link?`; updateSig(); } }, 8000);
+  updateSig();
 }
 
 function watchBots(settings) {
@@ -487,6 +509,7 @@ function beginRound(msg, me) {
   S.meta = msg.meta; S.cfg = msg.cfg; S.names = msg.names; S.seats = msg.seats; S.round = msg.round;
   S.me = me == null ? -1 : me;
   S.frame = null; S.feed = []; S.feedDirty = true; S.groups = new Map(); S.endMsg = null;
+  if (S.local) S.local.reset();
   S.joinable = false; S.leaveHeld = false; S.keys.clear(); S.pointer = null; S.lastSent = null;
   S.lastCrown = new Map(); S.myStun = false;
   $('toasts').innerHTML = ''; $('status').classList.add('hidden');
@@ -524,7 +547,7 @@ function quit() {
   try { if (S.host) S.host.close(); } catch (e) { console.warn(e); }
   try { if (S.client) S.client.close(); } catch (e) { console.warn(e); }
   try { if (S.transport && !S.transport.closed) S.transport.close(); } catch (e) { console.warn(e); }
-  Object.assign(S, { mode: null, kind: null, room: null, transport: null, host: null, client: null, meta: null, cfg: null, names: [], seats: [], me: -1, frame: null, feed: [], groups: new Map(), endMsg: null, lobby: null, lastSent: null });
+  Object.assign(S, { mode: null, kind: null, room: null, transport: null, host: null, client: null, meta: null, cfg: null, names: [], seats: [], me: -1, frame: null, local: null, feed: [], groups: new Map(), endMsg: null, lobby: null, lastSent: null, rtcFallback: '' });
   $('end').classList.add('hidden'); $('hostLeft').classList.add('hidden');
   history.replaceState(null, '', location.href.split('#')[0]);
   setConn('');

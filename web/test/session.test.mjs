@@ -345,3 +345,31 @@ test('client view emits each snapshot event exactly once, in order', () => {
   assert.equal(seen.length, hostEvents.length, 'client saw every event once: ' + seen.length + ' vs ' + hostEvents.length);
   assert.deepEqual(seen.map((e) => e.kind + '@' + e.t), hostEvents.map((e) => e.kind + '@' + e.t));
 });
+
+test('LocalView: the host draws interpolated frames a little behind its 30 Hz simulation', async () => {
+  const { LocalView, interpolateFrame } = await import('../src/session.js');
+  let now = 1000;
+  const v = new LocalView({ now: () => now, lag: 50 });
+  const mk = (t, x, ev = []) => ({ t, tick: Math.round(t * 30), R: 1, bodies: [{ m: [0], x, y: 0, vx: 0.3, vy: 0, pool: [0, 0, 0, 0], head: 0, stun: 0 }], mines: [], alive: [], picks: [], players: [{ banked: [0, 0, 0, 0], join: 0, leaving: -1, brand: 0, intent: 0, dir: [1, 0], cd: 0 }], events: ev });
+  assert.equal(v.view(now), null);
+  v.push(mk(0, 0), now);
+  now += 33; v.push(mk(1 / 30, 0.01, [{ kind: 'spill', t: 1 / 30 }]), now);
+  now += 33; v.push(mk(2 / 30, 0.02), now);
+  // render 50 ms behind: between the first two frames
+  const f = v.view(now);
+  assert.ok(f.t > 0 && f.t < 1 / 30, 't between frames: ' + f.t);
+  assert.ok(f.bodies[0].x > 0 && f.bodies[0].x < 0.01, 'x interpolated');
+  assert.deepEqual(f.events, [], 'the spill is not emitted before its frame time');
+  now += 40;
+  const g = v.view(now);
+  assert.ok(g.t > f.t, 'monotonic'); assert.equal(g.events.length, 1, 'the spill arrives once its frame is passed');
+  assert.equal(v.view(now + 1).events.length, 0, 'and only once');
+  // a stalled timer: the view holds near the newest frame instead of running away
+  now += 5000;
+  const h = v.view(now);
+  assert.ok(h.t <= 2 / 30 + 0.051, 'clamped near the newest frame: ' + h.t);
+  // a new round (time restarts) resyncs
+  v.reset(); v.push(mk(0, 0.5), now); now += 60; v.push(mk(1 / 30, 0.51), now);
+  const k = v.view(now); assert.ok(k.bodies[0].x >= 0.5 && k.bodies[0].x <= 0.51);
+  assert.equal(typeof interpolateFrame, 'function');
+});

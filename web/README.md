@@ -92,10 +92,14 @@ previous one; clients render an interpolated view about 100 ms behind the newest
 the connection jitters). Bots and agents run on the host too. The room code is the only thing peers
 share: `src/net.js` joins the Trystero room `ungroup-web-v1/CODE`, and peers find each other through
 Trystero's public signalling strategies (BitTorrent trackers first, nostr and MQTT relays as fallbacks)
-and then talk directly over WebRTC data channels. No server of ours exists, nothing is stored anywhere,
-and a room dies with its host. The `local` transport (`#r=CODE&local`, or automatically on `file://`
-and when Trystero cannot be loaded) uses a `BroadcastChannel`, so the room only spans the tabs of one
-browser; it is what the tests use.
+and then talk directly over WebRTC data channels (Google STUN plus the public Open Relay TURN service
+for peers behind strict NATs). No server of ours exists, nothing is stored anywhere, and a room dies
+with its host. The `rtc` transport is really a pair: alongside Trystero it always opens a
+`BroadcastChannel` under the same peer id, so other tabs of the same browser find the room at once
+even when no tracker answers, and a peer reachable that way is only spoken to that way. The lobby shows
+the signalling state (strategy, trackers answering, peers) and explains what to do when no tracker
+answers. The `local` transport alone (`#r=CODE&local`, or automatically on `file://` and when Trystero
+cannot be loaded) is the `BroadcastChannel` by itself; it is what the tests use.
 
 **When the host leaves** (closes the tab, loses the connection or crashes) every client shows a
 *host left* overlay within about two seconds and can go back home; the room is gone because the game
@@ -117,7 +121,7 @@ Chromium. `python3 -m http.server` is spawned by the browser tests themselves.
 ```
 node web/test/session.test.mjs            # host/client protocol over an in-process fake transport (8)
 node web/test/session_robust.test.mjs     # adversarial: loss/jitter, silent clients, refresh, throttled host, host crash, 20 peers, 32-player snapshots (9)
-node web/test/net.test.mjs                # transports: BroadcastChannel, mocked Trystero in both API shapes (4)
+node web/test/net.test.mjs                # transports: BroadcastChannel, mocked Trystero in both API shapes, the dual transport (5)
 node web/test/conformance.mjs             # engine vs the C++ core: bit-exact resets, ladder statistics, determinism, macro steering, observation layout, mine cap, perf
 node web/test/conformance.mjs --skip-ladder                              # the fast checks only
 OMP_NUM_THREADS=1 python3 web/test/reference.py                          # regenerate test/reference.json from the C++ core (needs rl/)
@@ -139,7 +143,7 @@ the shipped C++ core uses FMA, the JS engine reproduces a `-ffp-contract=off` bu
 | `src/engine.js` | the rules core, ported function by function from `rl/native/ungroup.cpp`: `CONFIG_DEFAULTS`, `PRESETS`, `preset()`, `Game` (`reset`, `setSeats`, `setInput`, `tick`/`step`, `frame()`/`meta()` in the replay schema, `observe()` in the v3 layout, `stats`, the six scripted bots, macro targets) |
 | `src/rng.js` | `std::mt19937_64` plus the libstdc++ `uniform_real`, `uniform_int`, `discrete_distribution` algorithms, so a seed produces the same needs, pads and mines as the C++ core |
 | `src/render.js` | `createRenderer(canvas, assets)`: the look of the SFML client (the 1x world buffer blitted up with nearest sampling, chase camera, dark disc with the grey out-of-bounds, the two dotted layers, `voronoi_counts` cells for bodies and mines, direction arrows in intent colours, joinable / ungroup rings, sparks on collisions and on every mine hit while a body gathers, the letter HUD in the monogram font from a crisp glyph atlas) plus the pixel-style extras for the new rules (pads, crown notch, brand rim, pickups, clock) in WebGL2 with a 2D-canvas fallback (`#...&2d` forces it) |
-| `src/net.js` | `createTransport({kind, room})`: `local` (BroadcastChannel with heartbeats) and `rtc` (Trystero over WebRTC; torrent / nostr / mqtt signalling, pinned version) behind one `{id, peers, onPeer, onLeave, send, on, close}` interface |
+| `src/net.js` | `createTransport({kind, room})`: `local` (BroadcastChannel with heartbeats), `rtc` (a `DualTransport`: Trystero over WebRTC with torrent / nostr / mqtt signalling, pinned version, STUN + TURN, plus the BroadcastChannel under the same id) and `rtc-only`, behind one `{id, peers, onPeer, onLeave, send, on, status, close}` interface |
 | `src/session.js` | `Host` and `Client`: lobby, `hello`/`lobby`/`start`/`input`/`snap`/`end` protocol, 30 Hz fixed-step engine on the host, 15 Hz snapshots with an event window, input validation and stale-input timeout, seat reclaim by token, host heartbeat and host-left detection, rate-controlled interpolated client view, automatic round restart |
 | `src/agent.js` | `loadAgent(url)`: a trained policy from `models/*.onnx` through onnxruntime-web, returning `act(obs) -> [move, join, leave, intent]` |
 | `models/` | exported policies (`v9_150`: legacy 9-way moves, `v10_100`: macro targets, the peak snapshot; `v10_latest` is the drifted end of the same run) with their sidecar json; see `models/README.md` for regeneration with `rl/export_onnx.py` |
@@ -150,14 +154,14 @@ the shipped C++ core uses FMA, the JS engine reproduces a `-ffp-contract=off` bu
 ## Known gaps
 
 * The `rtc` transport could not be exercised end to end in the sandbox this was built in (no WebSocket
-  upgrades through its proxy, so no Trystero signalling); the wrapper is covered by mocked-room unit
-  tests and the app falls back to `local` when Trystero cannot be loaded, showing *rtc unavailable* in
-  the status. Public trackers and relays are best-effort: joining can take several seconds, and
-  symmetric NATs without a TURN server will not connect (Trystero's default STUN only).
+  upgrades through its proxy, so no Trystero signalling); the wrappers are covered by mocked-room unit
+  tests. Public trackers and relays are best-effort: joining another device can take several seconds,
+  and a network that blocks `wss://` trackers or the Open Relay TURN service leaves only the same-browser
+  channel working (the lobby says so).
 * Room settings are fixed when the room is created; there is no in-lobby editing (`Host.updateSettings`
   exists but has no UI).
-* The host renders its own 30 Hz frames without interpolation (clients are interpolated); the host
-  camera lerp smooths it but body motion is 30 Hz on the host.
+* The host's screen is drawn from `LocalView`, an interpolated playback 50 ms behind its own 30 Hz
+  simulation (clients are interpolated the same way), so what the host sees is that little bit late.
 * Agent seats need onnxruntime-web from jsDelivr and a model next to the page; without them they play
   as `solo` bots (noted in the console only). Inference calls are serialised, so many agent seats with a
   short `decideEvery` cost host frame time.
