@@ -9,7 +9,8 @@
 // watch (start a bots-only game at once; optional bots=bail,loyal,... preset=life seed=N).
 // Test hook: window.__app is the app state (mode, frame, frames, me, host, client, lobby, feed ...).
 
-import { createRenderer, PALETTE_CSS, WORLD_PX } from './render.js';
+import { createRenderer, PALETTE_CSS } from './render.js';
+const FORCE_2D = /(^|[#&])2d(&|$)/.test(location.hash);   // #...&2d at load forces the canvas fallback renderer
 import { PRESETS } from './engine.js';
 import { createTransport } from './net.js';
 import { Host, Client, RESTART_DELAY_MS } from './session.js';
@@ -24,7 +25,7 @@ const S = {
   screen: 'home', mode: null, kind: null, room: null, transport: null, host: null, client: null,
   renderer: null, meta: null, cfg: null, names: [], seats: [], me: -1, round: 0,
   frame: null, frames: 0, feed: [], feedDirty: false, groups: new Map(),
-  endMsg: null, endAt: 0, lobby: null, arena: false, agentOk: false,
+  endMsg: null, endAt: 0, lobby: null, arena: false, panel: false, agentOk: false,
   keys: new Set(), pointer: null, joinable: false, leaveHeld: false, intentVal: 0, intentUntil: 0,
   lastSent: null, panelAt: 0, name: '', conn: '', toasts: [], lastCrown: new Map(), myStun: false, myGroup: '',
 };
@@ -72,10 +73,9 @@ function ensureRenderer() {
   const r = createRenderer($('c'), {
     fontUrl: 'assets/monogram.ttf',
     dottedBackgroundUrl: 'assets/dotted_background.png',
-    minePatternUrl: 'assets/mine_pattern.png',
     sparkUrl: 'assets/spark.png',
     letterUrls: ['assets/a_letter.png', 'assets/m_letter.png', 'assets/e_letter.png', 'assets/n_letter.png'],
-  });
+  }, FORCE_2D ? { mode: 'canvas2d' } : {});
   r.ready.then(() => { S.rendererReady = true; }).catch((e) => console.warn('renderer assets', e));
   S.renderer = r;
   return r;
@@ -231,14 +231,14 @@ function updatePanel(frame) {
     const feed = $('feed');
     feed.innerHTML = S.feed.slice().reverse().map((e) => `<li class="${e.tag}"><span class="t">${e.t.toFixed(0)}s</span>${esc(e.text)}</li>`).join('');
   }
-  for (const el of document.querySelectorAll('#ctrl .play')) el.classList.toggle('hidden', S.me < 0);
+  for (const el of document.querySelectorAll('#bar .play')) el.classList.toggle('hidden', S.me < 0);
   $('keys').classList.toggle('hidden', S.me < 0);
   $('bJoin').textContent = 'join: ' + (S.joinable ? 'on' : 'off');
   $('bJoin').classList.toggle('on', S.joinable);
   $('bLeave').classList.toggle('on', S.leaveHeld);
   $('bCam').classList.toggle('on', S.arena);
   const myIntent = S.me >= 0 && frame.players[S.me] ? (frame.players[S.me].intent & 3) : -1;
-  for (const b of document.querySelectorAll('#ctrl .int')) b.classList.toggle('on', (+b.dataset.intent - 1) === myIntent);
+  for (const b of document.querySelectorAll('#bar .int')) b.classList.toggle('on', (+b.dataset.intent - 1) === myIntent);
 }
 
 // --------------------------------------------------------------------------------------------- input
@@ -246,12 +246,9 @@ function myScreenPos() {
   if (S.me < 0 || !S.frame || !S.renderer) return null;
   const b = bodyOf(S.frame, S.me);
   if (!b) return null;
-  const c = $('c');
-  const w = c.clientWidth, h = c.clientHeight;
-  const cam = S.renderer.camera;
-  const per = S.arena ? Math.min(w, h) / 2.12 : WORLD_PX * (cam.zoom || 1);
-  return { x: w / 2 + (b.x - cam.x) * per, y: h / 2 + (b.y - cam.y) * per };
+  return S.renderer.project(b.x, b.y);   // css px of the canvas, with the last drawn camera
 }
+function setPanel(open) { S.panel = !!open; $('game').classList.toggle('panel', S.panel); $('bMenu').classList.toggle('on', S.panel); }
 function computeDir() {
   let dx = 0, dy = 0;
   const k = S.keys;
@@ -297,6 +294,7 @@ function bindInput() {
       case 'KeyL': setLeave(true); break;
       case 'Digit1': case 'Digit2': case 'Digit3': case 'Digit4': declareIntent(+e.code.slice(5)); break;
       case 'KeyC': S.arena = !S.arena; break;
+      case 'Tab': setPanel(!S.panel); e.preventDefault(); break;
       default: return;
     }
     pushInput(performance.now());
@@ -317,8 +315,9 @@ function bindInput() {
   $('bJoin').addEventListener('click', toggleJoin);
   $('bLeave').addEventListener('pointerdown', (e) => { setLeave(true); e.preventDefault(); });
   for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) $('bLeave').addEventListener(ev, () => setLeave(false));
-  for (const b of document.querySelectorAll('#ctrl .int')) b.addEventListener('click', () => declareIntent(+b.dataset.intent));
+  for (const b of document.querySelectorAll('#bar .int')) b.addEventListener('click', () => declareIntent(+b.dataset.intent));
   $('bCam').addEventListener('click', () => { S.arena = !S.arena; });
+  $('bMenu').addEventListener('click', () => setPanel(!S.panel));
   $('bQuit').addEventListener('click', quit);
   $('endLeave').addEventListener('click', quit);
   $('hostLeftHome').addEventListener('click', quit);
@@ -485,20 +484,21 @@ function beginRound(msg, me) {
   $('end').classList.add('hidden');
   ensureRenderer().camera.init = false;
   show('game');
+  setPanel(S.me < 0 || S.panel);   // spectators get the panel; players start with the plain view (Tab opens it)
   pushInput(performance.now(), true);
   if (S.me >= 0) {
     const need = S.meta && S.meta.needs ? S.meta.needs[S.me] : null;
     const prim = need ? need.indexOf(Math.max(...need)) : -1;
-    toast(`round ${S.round}: sit on a mine to fill your pool, then bring it home to your pad (the ring labelled home)`, 'hint', 7000);
+    toast(`round ${S.round}: sit on a mine to fill your pool, then bring it home to your pad (the bright ring at the edge)`, 'hint', 7000);
     if (prim >= 0) setTimeout(() => { if (S.frame && !S.endMsg) toast(`you mostly need ${resName(prim)} (${need[prim]}) - press ${prim + 1} to declare it`, 'hint', 6000); }, 4000);
-  } else toast('spectating - C toggles the camera', 'hint', 4000);
+  } else toast('spectating - C toggles the camera, Tab the panel', 'hint', 4000);
 }
 
 function showEnd(msg) {
   S.endMsg = msg; S.endAt = performance.now();
   const names = msg.names || S.names;
   const w = msg.winner;
-  $('endTitle').textContent = w >= 0 ? `${names[w] || 'player ' + w} wins` : 'time limit reached';
+  $('endTitle').textContent = w >= 0 ? `Winner: ${names[w] || 'player ' + w}` : 'time limit reached';
   $('endSub').textContent = msg.timeoutWin ? 'time limit: highest progress wins' : w >= 0 ? 'completed all four needs' : '';
   const order = msg.progress.map((p, i) => [p, i]).sort((a, b) => b[0] - a[0]);
   $('endtab').innerHTML = '<tr><th>#</th><th>player</th><th></th><th>progress</th></tr>' + order.map(([p, i], k) =>

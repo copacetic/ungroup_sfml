@@ -76,7 +76,19 @@ h3 { font-size: 22px; margin: 12px 0 4px; font-weight: normal; color: var(--dim)
 #game.active { display: flex; }
 #stage { flex: 1 1 auto; position: relative; min-width: 0; }
 #c { display: block; width: 100%; height: 100%; image-rendering: pixelated; touch-action: none; cursor: crosshair; }
-#panel { flex: 0 0 320px; width: 320px; background: var(--panel); border-left: 2px solid var(--line); display: flex; flex-direction: column; overflow: hidden; font-size: 18px; }
+#panel { flex: 0 0 320px; width: 320px; background: var(--panel); border-left: 2px solid var(--line); display: none; flex-direction: column; overflow: hidden; font-size: 18px; }
+#game.panel #panel { display: flex; }
+/* the buttons live on the canvas: always on touch screens, otherwise with the panel */
+#bar { position: absolute; left: 12px; bottom: 12px; display: none; flex-wrap: wrap; gap: 6px; z-index: 6; max-width: calc(100% - 24px); }
+#game.panel #bar { display: flex; }
+@media (pointer: coarse) { #bar { display: flex; } }
+#bar button { font-size: 16px; padding: 3px 8px; background: rgba(34, 32, 52, 0.85); }
+#bar button.on { border-color: var(--A); color: var(--A); }
+#bar .int { width: 34px; padding: 3px 0; border-color: currentColor; }
+#bar .int.i0 { color: var(--A); } #bar .int.i1 { color: var(--B); } #bar .int.i2 { color: var(--C); } #bar .int.i3 { color: var(--D); }
+#bar .int.on { background: #55537a; box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px currentColor; }
+#bMenu { position: absolute; right: 12px; bottom: 12px; z-index: 6; font-size: 16px; padding: 3px 10px; background: rgba(34, 32, 52, 0.6); border-color: #3c3a56; color: var(--dim); }
+#bMenu:hover, #bMenu.on { color: var(--text); border-color: var(--line); }
 #panel .sec { padding: 8px 10px; border-bottom: 2px solid var(--line); }
 #pbody { flex: 1 1 auto; overflow: auto; min-height: 0; display: flex; flex-direction: column; }
 #panel .sec.grow { flex: 1 0 auto; min-height: 60px; }
@@ -114,12 +126,6 @@ h3 { font-size: 22px; margin: 12px 0 4px; font-weight: normal; color: var(--dim)
 #feed li.crown { color: var(--gold); }
 #feed li.win { color: var(--gold); font-size: 18px; }
 #feed li.mine { color: var(--C); }
-#ctrl { display: flex; flex-wrap: wrap; gap: 6px; }
-#ctrl button { font-size: 16px; padding: 3px 8px; }
-#ctrl button.on { border-color: var(--A); color: var(--A); }
-#ctrl .int { width: 34px; padding: 3px 0; border-color: currentColor; }
-#ctrl .int.i0 { color: var(--A); } #ctrl .int.i1 { color: var(--B); } #ctrl .int.i2 { color: var(--C); } #ctrl .int.i3 { color: var(--D); }
-#ctrl .int.on { background: #55537a; box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px currentColor; }
 #keys { font-size: 14px; color: var(--dim); }
 #keys kbd { color: var(--text); }
 
@@ -135,7 +141,7 @@ h3 { font-size: 22px; margin: 12px 0 4px; font-weight: normal; color: var(--dim)
 #toasts div.hint { color: var(--dim); }
 #toasts div.fade { opacity: 0; transition: opacity 0.4s; }
 @keyframes toastin { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
-#status { position: absolute; left: 24px; top: 78px; font-size: 22px; pointer-events: none; z-index: 5; display: flex; flex-direction: column; gap: 2px; }
+#status { position: absolute; left: 24px; top: 24px; font-size: 22px; pointer-events: none; z-index: 5; display: flex; flex-direction: column; gap: 2px; }
 #status span { display: inline-block; padding: 0 6px; background: rgba(34, 32, 52, 0.7); }
 #status .join { color: var(--A); }
 #status .leave { color: var(--B); animation: pulse 0.3s infinite alternate; }
@@ -158,15 +164,28 @@ h3 { font-size: 22px; margin: 12px 0 4px; font-weight: normal; color: var(--dim)
 #endtab .bar i { display: block; height: 100%; background: #dcdcf0; }
 #countdown { color: var(--B); margin-top: 6px; }
 #endMe { color: var(--A); margin: 2px 0 4px; }
+/* the original's winner screen: RESOURCE_D pink with white monogram */
+#end { background: rgba(243, 156, 156, 0.55); }
+#end .box { background: rgb(243, 156, 156); color: #fff; border-color: #fff; }
+#end h2 { font-size: 56px; margin-bottom: 2px; }
+#end .dim, #end #endtab th { color: rgba(34, 32, 52, 0.7); }
+#end #endMe { color: #fff; }
+#end #endtab td { color: #fff; }
+#end #endtab tr.win td { color: rgb(34, 32, 52); }
+#end #endtab tr.me td:first-child { color: rgb(34, 32, 52); }
+#end #endtab .bar { background: rgba(34, 32, 52, 0.25); }
+#end #endtab .bar i { background: #fff; }
+#end .tag { border-color: rgba(255, 255, 255, 0.6); color: #fff; }
+#end #countdown { color: rgb(34, 32, 52); }
+#end button { background: rgba(34, 32, 52, 0.25); border-color: #fff; color: #fff; }
 
 @media (max-width: 900px) {
   #panel { flex-basis: 260px; width: 260px; font-size: 16px; }
   #panel .sec { padding: 6px 8px; }
   #toasts div { font-size: 20px; }
-  #status { font-size: 18px; top: 72px; left: 16px; }
+  #status { font-size: 18px; top: 16px; left: 16px; }
 }
 @media (max-width: 760px) {
-  #game.active { flex-direction: column; }
-  #panel { flex: 0 0 38%; width: auto; border-left: 0; border-top: 2px solid var(--line); font-size: 16px; }
+  #panel { position: absolute; right: 0; top: 0; bottom: 0; width: 78%; z-index: 8; font-size: 16px; }
   h1 { font-size: 44px; }
 }

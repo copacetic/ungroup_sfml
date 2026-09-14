@@ -27,26 +27,33 @@
 // assets.fontUrl; if you prefer CSS, add this to the page and omit fontUrl:
 //   @font-face { font-family: 'monogram'; src: url('assets/monogram.ttf') format('truetype'); }
 //
-// Pipeline (WebGL2): the world is rendered into a low resolution framebuffer (PIXEL_SCALE css px per
-// buffer pixel; the original draws at 1x and upscales the buffer 3x with nearest sampling) and blitted
-// up with nearest sampling so the cells, circles and dots stay chunky. Pass 1 is one fullscreen quad for
-// the dark arena disc, the out-of-bounds grey, the shrink ring and the two parallax dot layers (texelFetch,
-// integer scaling). Pass 2 draws one quad per circle (mines, bodies, pads) with the voronoi_counts shader
-// ported to GLSL ES 3.0. Pass 3 batches the flat geometry (pickups, arrows, crown notches, brand
-// segments, leaver pulses, dead mine rings) into one triangle buffer, then the spark sprites. The HUD
-// (resource letters + count/goal, round timer, name) is drawn on a 2D canvas at full resolution and
-// uploaded as a texture only when its content changes; off-screen mine indicators are letter sprites.
-// Without WebGL2 a 2D canvas fallback draws the same scene into a low resolution offscreen canvas; the
-// cells are approximated by soft blobs at the animated cell centres (no true Voronoi partition).
+// Pipeline, after RenderingController.cpp: the original draws the world at one pixel per game unit into
+// a render texture (GAME_SIZE = 1200 px for the 600 unit arena radius) and blits that buffer to the window
+// scaled 3x with nearest sampling, so everything is chunky 3x3 pixel blocks. Here the buffer covers the
+// visible part of the world at UNIT_PX buffer px per world unit (R = 1) and is blitted up by PIXEL_SCALE
+// css px per buffer px with nearest sampling. Pass 1 is one fullscreen quad for the dark arena disc, the
+// out-of-bounds grey and the two dot layers of dotted_background.png (static in world space, like the
+// shipped client whose parallax update is disabled). Pass 2 draws one quad per circle (pads, mines,
+// bodies) with voronoi_counts.frag ported to GLSL ES 3.0 (cells tiled over the circle's bounding box,
+// K = capacity cells for mines, K = units carried for bodies, uncoloured cells white at 5%). Pass 3
+// batches the flat geometry (direction arrows, crown notches, brand rims, pickups) into one triangle
+// buffer, then the spark frames (spark.png, 6 frames, 2x, 240 ms). The HUD is the original's
+// ResourceUIElement: tinted 10 px letter sprites at 2.5x and "NN/NN" in monogram at 55 px, top right,
+// plus off-screen mine letters at the view edge; it is drawn on a 2D canvas at full resolution and
+// uploaded as a texture only when its content changes. Without WebGL2 a 2D canvas fallback draws the
+// same scene into a low resolution offscreen canvas; the cells are approximated by blobs at the animated
+// cell centres (no true Voronoi partition).
 
 export const PALETTE = [[159, 224, 246], [243, 229, 154], [243, 181, 155], [243, 156, 156]];
 export const PALETTE_CSS = PALETTE.map(c => `rgb(${c[0]},${c[1]},${c[2]})`);
 export const BACKGROUND_COLOR = [34, 32, 52];
-export const OUT_OF_BOUNDS_COLOR = [120, 120, 120];   // the original's grey
-export const OUT_OF_BOUNDS_SOFT = [62, 60, 80];         // default here: the whole arena is usually in view
+export const OUT_OF_BOUNDS_COLOR = [120, 120, 120];   // the original's grey beyond the arena edge
+export const UNGROUP_COLOR = [0, 146, 199];             // the original's ring on a group that is being left
 export const GOLD = [255, 208, 80];
-export const WORLD_PX = 450;        // css px per world unit at zoom 1 (unit disc = 900 css px across)
-export const PIXEL_SCALE = 2;       // css px per world buffer pixel
+export const UNIT_PX = 450;         // buffer px per world unit (R = 1) at zoom 1: a mine (r 0.08) is 72 px across, near the original's 80
+export const PIXEL_SCALE = 3;       // css px per buffer px (the original upscales its 1x buffer 3x)
+export const ARENA_PIXEL_SCALE = 2; // css px per buffer px in the whole-arena view
+export const WORLD_PX = UNIT_PX * PIXEL_SCALE;   // css px per world unit at zoom 1 (1500: the arena is 3000 px across)
 export const CAMERA_CHASE = 0.5;    // lerp factor per 8 ms step, like the original (CAMERA_CHASE * MIN_TIME_STEP_SEC * dt)
 export const MAX_CELLS = 30;
 export const RESOURCE_LETTERS = ['a', 'm', 'e', 'n'];
@@ -114,18 +121,21 @@ in vec2 v_uv;
 out vec4 o;
 void main() { o = texture(u_tex, v_uv) * u_tint; }`;
 
-// Pass 1: ground disc + out of bounds + shrink ring + two parallax dot layers. Coordinates: buffer px, y down.
+// Pass 1: the arena disc (BACKGROUND_COLOR inside the current radius R, OUT_OF_BOUNDS grey beyond, so a
+// shrinking arena is the grey closing in) and the two dot layers of BackgroundController: sprite 2 at 1x
+// with the texture rect offset by half a tile, sprite 1 at 2x, alphas 0.7 / 0.8, both anchored to the
+// arena's top-left corner in world space. Coordinates: buffer px, y down.
 const FS_BG = `#version 300 es
 precision highp float;
 uniform vec2 u_buf;        // buffer size
 uniform vec2 u_origin;     // buffer px of world (0,0)
 uniform float u_scale;     // buffer px per world unit
-uniform float u_R;         // shrink radius
+uniform float u_R;         // arena radius (world units)
 uniform vec3 u_bg;
 uniform vec3 u_oob;
 uniform sampler2D u_dots;  // 200x200
 uniform ivec2 u_dotSize;
-uniform ivec2 u_off1;      // parallax offsets in buffer px (integer)
+uniform ivec2 u_off1;      // buffer px added to the fragment before the texel lookup (integer)
 uniform ivec2 u_off2;
 uniform int u_k1;          // integer texel scale of layer 1 (2)
 uniform int u_k2;          // layer 2 (1)
@@ -136,12 +146,7 @@ void main() {
   vec2 fc = vec2(gl_FragCoord.x, u_buf.y - gl_FragCoord.y);   // y down
   vec2 w = (fc - u_origin) / u_scale;
   float d = length(w);
-  vec3 col = d <= 1.0 ? u_bg : u_oob;
-  if (u_R < 0.9999) {
-    if (d > u_R && d <= 1.0) col = mix(col, u_oob, 0.18);
-    float ring = abs(d - u_R) * u_scale;           // px from the ring
-    if (ring < 1.0) col = mix(col, vec3(0.80, 0.80, 0.88), 0.55);
-  }
+  vec3 col = d <= u_R ? u_bg : u_oob;
   if (u_hasDots == 1) {
     ivec2 p2 = ivec2(floor((fc + vec2(u_off2)) / float(u_k2)));
     vec4 t2 = texelFetch(u_dots, wrap(p2 + u_dotSize / 2), 0);
@@ -172,7 +177,7 @@ const int COLOR_COUNT = 4;
 uniform vec2 u_buf;
 uniform vec2 u_center;
 uniform float u_radius;
-uniform int u_mode;                 // 0 flat, 1 voronoi cells, 2 voronoi cells * mine texture
+uniform int u_mode;                 // 0 flat fill, 1 voronoi cells
 uniform float u_time;
 uniform int u_maxResources;         // cell count K
 uniform float u_resourceCounts[COLOR_COUNT];
@@ -180,7 +185,6 @@ uniform vec4 u_fill;                // flat fill (mode 0)
 uniform vec4 u_ring;                // ring colour
 uniform float u_ringIn;             // ring drawn for u_ringIn <= d < u_ringOut
 uniform float u_ringOut;
-uniform sampler2D u_tex;
 out vec4 o;
 
 const vec4 soft_a = vec4(159. / 255., 224. / 255., 246. / 255., 1.);
@@ -229,13 +233,9 @@ void main() {
   float d = distance(fc, u_center);
   if (d <= u_radius) {
     if (u_mode == 0) { o = u_fill; return; }
+    // voronoi_counts.frag: st = fract((coord - top_left) / (2 r)), one tile over the circle's bounding box
     vec2 st = fract((fc - (u_center - vec2(u_radius))) / (u_radius * 2.));
-    vec4 col = voronoi(st);
-    if (u_mode == 2) {
-      vec4 t = texture(u_tex, st);
-      col.rgb *= mix(vec3(1.0), t.rgb, 0.7);
-    }
-    o = col;
+    o = voronoi(st);
     return;
   }
   if (d >= u_ringIn && d < u_ringOut) { o = u_ring; return; }
@@ -471,9 +471,6 @@ function makeGL(canvas) {
     gl.uniform4f(P.u.u_ring, rg[0], rg[1], rg[2], rg[3]);
     gl.uniform1f(P.u.u_ringIn, c.ringIn || 0);
     gl.uniform1f(P.u.u_ringOut, c.ringOut || 0);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, (c.mode === 2 && B.tex.mine) || B.tex.white);
-    gl.uniform1i(P.u.u_tex, 0);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   };
 
@@ -566,13 +563,7 @@ function make2D(canvas) {
     octx.fillStyle = css(p.oob);
     octx.fillRect(0, 0, bufW, bufH);
     octx.fillStyle = css(BACKGROUND_COLOR);
-    octx.beginPath(); octx.arc(p.ox, p.oy, p.scale, 0, Math.PI * 2); octx.fill();
-    if (p.R < 0.9999) {
-      octx.fillStyle = css(p.oob, 0.18);
-      octx.beginPath(); octx.arc(p.ox, p.oy, p.scale, 0, Math.PI * 2); octx.arc(p.ox, p.oy, p.R * p.scale, 0, Math.PI * 2, true); octx.fill();
-      octx.strokeStyle = 'rgba(204,204,224,0.55)'; octx.lineWidth = 1.5;
-      octx.beginPath(); octx.arc(p.ox, p.oy, p.R * p.scale, 0, Math.PI * 2); octx.stroke();
-    }
+    octx.beginPath(); octx.arc(p.ox, p.oy, p.R * p.scale, 0, Math.PI * 2); octx.fill();
     const layer = (k, offx, offy, alpha, half) => {
       const img = dotsScaled(k);
       if (!img) return;
@@ -595,11 +586,6 @@ function make2D(canvas) {
       octx.clip();
       octx.fillStyle = 'rgba(255,255,255,0.05)';
       octx.fillRect(c.x - c.r, c.y - c.r, 2 * c.r, 2 * c.r);
-      if (c.mode === 2 && B.img.mine) {
-        octx.globalAlpha = 0.25;
-        octx.drawImage(B.img.mine, c.x - c.r, c.y - c.r, 2 * c.r, 2 * c.r);
-        octx.globalAlpha = 1;
-      }
       const cells = Math.min(MAX_CELLS, c.cells | 0);
       if (cells > 0) {
         const types = cellTypes(c.counts, cells);
@@ -675,7 +661,7 @@ function make2D(canvas) {
 // ---------------------------------------------------------------------------------------------------
 
 export function createRenderer(canvas, assets = {}, options = {}) {
-  const opt = { worldPx: WORLD_PX, pixelScale: PIXEL_SCALE, chase: CAMERA_CHASE, hud: true, outOfBounds: OUT_OF_BOUNDS_SOFT, ...options };
+  const opt = { unitPx: UNIT_PX, pixelScale: PIXEL_SCALE, arenaPixelScale: ARENA_PIXEL_SCALE, chase: CAMERA_CHASE, hud: true, outOfBounds: OUT_OF_BOUNDS_COLOR, ...options };
   let B = null;
   if (opt.mode !== 'canvas2d') { try { B = makeGL(canvas); } catch (e) { console.warn('render: WebGL2 failed, using 2D', e); B = null; } }
   if (!B) B = make2D(canvas);
@@ -684,10 +670,10 @@ export function createRenderer(canvas, assets = {}, options = {}) {
   const hudCanvas = document.createElement('canvas');
   const hctx = hudCanvas.getContext('2d');
   const letters = [null, null, null, null];
-  let sparkImg = null;
 
   const state = {
     cam: { x: 0, y: 0, zoom: 1, init: false, lastMs: 0 },
+    view: { ox: 0, oy: 0, scale: 1, pix: 1, bufW: 1, bufH: 1 },   // the last draw's transform (project())
     sparks: [],            // { x, y, t0 } world units
     stunSeen: new Map(),   // body key -> stun value at the previous draw
     hudKey: '',
@@ -700,11 +686,20 @@ export function createRenderer(canvas, assets = {}, options = {}) {
     : assets.letterUrls ? RESOURCE_LETTERS.map(k => assets.letterUrls[k]) : [];
   const ready = Promise.all([
     loadImage(assets.dottedBackgroundUrl).then(img => { if (img) B.texture('dots', img); state.dots = img; }),
-    loadImage(assets.minePatternUrl).then(img => { if (img) B.texture('mine', img); }),
-    loadImage(assets.sparkUrl).then(img => { if (img) { B.texture('spark', img); sparkImg = img; } }),
+    loadImage(assets.sparkUrl).then(img => { if (img) B.texture('spark', img); }),
     ...letterUrls.map((u, i) => loadImage(u).then(img => { if (img) { B.texture('letter' + i, img); letters[i] = img; } })),
     loadFont(assets.fontUrl).then(ok => { state.fontReady = ok || (document.fonts && document.fonts.check && document.fonts.check('16px monogram')); }),
   ]).then(() => { state.hudKey = ''; return renderer; });
+
+  // a 10x10 ring, the "pad" counterpart of the letter sprites for the off-screen indicator
+  {
+    const c = document.createElement('canvas'); c.width = 10; c.height = 10;
+    const cx = c.getContext('2d');
+    const on = [[3, 0], [4, 0], [5, 0], [6, 0], [1, 1], [2, 1], [7, 1], [8, 1], [0, 2], [9, 2], [0, 3], [9, 3], [0, 4], [9, 4], [0, 5], [9, 5], [0, 6], [9, 6], [0, 7], [9, 7], [1, 8], [2, 8], [7, 8], [8, 8], [3, 9], [4, 9], [5, 9], [6, 9]];
+    cx.fillStyle = '#fff';
+    for (const [x, y] of on) cx.fillRect(x, y, 1, 1);
+    B.texture('padicon', c, true);
+  }
 
   function resize() {
     const dpr = Math.max(1, Math.min(4, window.devicePixelRatio || 1));
@@ -725,6 +720,12 @@ export function createRenderer(canvas, assets = {}, options = {}) {
     return null;
   }
 
+  // world -> css px of the canvas, with the transform of the last draw
+  function project(wx, wy) {
+    const v = state.view;
+    return { x: (v.ox + wx * v.scale) * v.pix / state.dpr, y: (v.oy + wy * v.scale) * v.pix / state.dpr };
+  }
+
   function draw(args) {
     const t0 = performance.now();
     const { frame, meta } = args;
@@ -734,56 +735,56 @@ export function createRenderer(canvas, assets = {}, options = {}) {
       : (meta && meta.cfg ? cfgFromArray(meta.cfg) : CFG_DEFAULTS);
     const me = (args.me == null) ? -1 : args.me;
     const time = args.time != null ? args.time : performance.now() / 1000;
-    const names = args.names || [];
     const camArg = args.camera || {};
     const dpr = state.dpr;
-    const pix = Math.max(1, Math.round(opt.pixelScale * dpr));   // device px per buffer px
+    const myBody = findBody(frame, me);
+    const arenaMode = camArg.mode === 'arena' || (me < 0 && camArg.x == null);
+    // chunky pixels: PIXEL_SCALE css px per buffer px (2 on narrow screens so enough world stays in view)
+    const pscale = arenaMode ? opt.arenaPixelScale : (state.cssW < 700 ? Math.min(2, opt.pixelScale) : opt.pixelScale);
+    const pix = Math.max(1, Math.round(pscale * dpr));   // device px per buffer px
     B.pix = pix;
     const bufW = Math.ceil(canvas.width / pix), bufH = Math.ceil(canvas.height / pix);
     const R = frame.R != null ? frame.R : 1;
 
-    // ---- camera (world units) ----
+    // ---- camera (world units): the original lerps the view centre to the player each frame ----
     const cam = state.cam;
-    const myBody = findBody(frame, me);
     const nowMs = performance.now();
     const dtMs = cam.lastMs ? Math.min(100, nowMs - cam.lastMs) : 16;
     cam.lastMs = nowMs;
-    let zoom = camArg.zoom || 1;
+    const zoom = camArg.zoom || 1;
     let scale;  // buffer px per world unit
-    const arenaMode = camArg.mode === 'arena' || (me < 0 && camArg.x == null);
     if (camArg.x != null && camArg.y != null) {
       cam.x = camArg.x; cam.y = camArg.y; cam.init = true;
-      scale = opt.worldPx * dpr / pix * zoom;
+      scale = opt.unitPx * zoom;
     } else if (arenaMode) {
-      const tx = 0, ty = 0;
-      if (!cam.init) { cam.x = tx; cam.y = ty; cam.init = true; }
+      if (!cam.init) { cam.x = 0; cam.y = 0; cam.init = true; }
       const a = Math.min(1, opt.chase * 0.008 * dtMs);
-      cam.x += (tx - cam.x) * a; cam.y += (ty - cam.y) * a;
+      cam.x += (0 - cam.x) * a; cam.y += (0 - cam.y) * a;
       scale = Math.min(bufW, bufH) / 2.12 * zoom;
     } else {
       const tx = myBody ? myBody.x : 0, ty = myBody ? myBody.y : 0;
       if (!cam.init) { cam.x = tx; cam.y = ty; cam.init = true; }
       const a = Math.min(1, opt.chase * 0.008 * dtMs);
       cam.x += (tx - cam.x) * a; cam.y += (ty - cam.y) * a;
-      scale = opt.worldPx * dpr / pix * zoom;
+      scale = opt.unitPx * zoom;
     }
-    // buffer px of the world origin (y down); snapped to whole buffer pixels so the dots stay aligned
+    // buffer px of the world origin (y down); whole buffer pixels so the dots and rings stay on the grid
     const ox = Math.round(bufW / 2 - cam.x * scale), oy = Math.round(bufH / 2 - cam.y * scale);
     const X = (wx) => ox + wx * scale, Y = (wy) => oy + wy * scale;
-    const soloR = (cfg.solo_radius || 0.045) * scale;                 // buffer px of a solo body
-    const unit = Math.max(1, Math.round(soloR / 10));                   // 1 buffer px at zoom 1 (the original's game unit)
+    state.view = { ox, oy, scale, pix, bufW, bufH };
 
-    // ---- pass 1: ground ----
+    // ---- pass 1: ground. The dot layers are anchored to the arena's top-left corner (world -1,-1), the
+    // original's texture origin; sprite 2 starts half a tile in. ----
     B.begin(bufW, bufH);
-    const camPx = cam.x * scale, camPy = cam.y * scale;
+    const dotOx = Math.round(ox - scale), dotOy = Math.round(oy - scale);
     B.background({
       ox, oy, scale, R, oob: opt.outOfBounds,
       dotW: state.dots ? state.dots.width : 200, dotH: state.dots ? state.dots.height : 200,
-      off1x: Math.round(camPx / 10), off1y: Math.round(camPy / 10),
-      off2x: Math.round(camPx / 5), off2y: Math.round(camPy / 5),
+      off1x: -dotOx, off1y: -dotOy,
+      off2x: -dotOx, off2y: -dotOy,
     });
 
-    // ---- pads ----
+    // ---- pads: a one pixel ring (the own pad bright, the group head's pad gold, the rest faint) ----
     const padR = (cfg.pad_radius || 0.06);
     const padRing = Math.max(R - padR - 0.02, 0.1);
     const crownOn = !!cfg.crown;
@@ -794,24 +795,17 @@ export function createRenderer(canvas, assets = {}, options = {}) {
         const a = meta.pads[i];
         const px = X(padRing * Math.cos(a)), py = Y(padRing * Math.sin(a));
         const mine = i === me, head = i === headOfMine && i !== me;
+        const pr = padR * scale;
         B.drawCircle({
-          x: px, y: py, r: padR * scale, mode: 0, cells: 0,
-          fill: mine ? [1, 1, 1, 0.13] : head ? rgba(GOLD, 0.12) : [1, 1, 1, 0.06],
-          ring: mine ? [1, 1, 1, 0.75] : head ? rgba(GOLD, 0.8) : [1, 1, 1, 0.22],
-          ringIn: padR * scale, ringOut: padR * scale + unit,
+          x: px, y: py, r: pr, mode: 0, cells: 0,
+          fill: mine ? [1, 1, 1, 0.08] : head ? rgba(GOLD, 0.06) : [1, 1, 1, 0.03],
+          ring: mine ? [1, 1, 1, 0.9] : head ? rgba(GOLD, 0.85) : [1, 1, 1, 0.22],
+          ringIn: pr, ringOut: pr + 1,
         });
       }
     }
 
-    // ---- pickups (small cells of their type colour) ----
-    const pickR = Math.max(2, 0.012 * scale);
-    for (const p of frame.picks || []) {
-      const c = PALETTE[p[2] & 3];
-      batch.poly(X(p[0]), Y(p[1]), pickR, 6, rgba(c, 0.95), time * 2 + p[0] * 7);
-    }
-    B.flushShapes(batch);
-
-    // ---- mines ----
+    // ---- mines: DrawableMine, K = capacity cells, the stock coloured, the rest white at 5%, no outline ----
     const mineR = (cfg.mine_radius || 0.08) * scale;
     const K = cfg.bloom_cap > 0 ? cfg.bloom_cap : (cfg.mine_cap || 30);
     const cells = Math.max(1, Math.round(K));
@@ -820,19 +814,20 @@ export function createRenderer(canvas, assets = {}, options = {}) {
         const [mx, my] = meta.mine_pos[m];
         const type = meta.mine_type ? meta.mine_type[m] & 3 : m & 3;
         const alive = frame.alive ? frame.alive[m] : true;
-        const cx = X(mx), cy = Y(my);
-        if (!alive) {
-          B.drawCircle({ x: cx, y: cy, r: mineR, mode: 0, cells: 0, fill: [0, 0, 0, 0.18], ring: [0.45, 0.44, 0.52, 0.5], ringIn: mineR, ringOut: mineR + unit });
-          continue;
-        }
-        const stock = frame.mines ? frame.mines[m] : K;
+        const stock = alive ? (frame.mines ? frame.mines[m] : K) : 0;
         const counts = [0, 0, 0, 0];
-        counts[type] = Math.min(cells, Math.round(stock));
-        B.drawCircle({ x: cx, y: cy, r: mineR, mode: 2, cells, counts, time, ring: rgba(PALETTE[type], 0.75), ringIn: mineR, ringOut: mineR + unit });
+        counts[type] = Math.max(0, Math.min(cells, Math.round(stock)));
+        B.drawCircle({ x: X(mx), y: Y(my), r: mineR, mode: 1, cells, counts, time, ringIn: 0, ringOut: 0 });
       }
     }
 
-    // ---- bodies ----
+    // ---- pickups: a spilled unit on the ground, a small disc of its colour ----
+    for (const p of frame.picks || []) {
+      B.drawCircle({ x: X(p[0]), y: Y(p[1]), r: Math.max(2, 0.008 * scale), mode: 0, cells: 0, fill: rgba(PALETTE[p[2] & 3], 1), ringIn: 0, ringOut: 0 });
+    }
+
+    // ---- bodies: DrawableGroup, K = units carried (an empty body is the 5% white disc), the joinable
+    // outline is the original's 1 px white ring one pixel out, a group being left gets the ungroup blue ----
     const players = frame.players || [];
     const bodyOf = [];
     for (const b of frame.bodies) {
@@ -841,20 +836,18 @@ export function createRenderer(canvas, assets = {}, options = {}) {
       const cx = X(b.x), cy = Y(b.y);
       const counts = b.pool.map(v => Math.round(v));
       const total = counts[0] + counts[1] + counts[2] + counts[3];
-      let joinable = n > 0;
-      for (const i of b.m) { const p = players[i]; if (!p || !p.join) joinable = false; }
-      // joinable: the original's 1 px white outline; the local player's own body additionally gets a faint
-      // ring when it is not joinable so an empty body stays findable on the dark arena
-      const mine = me >= 0 && b.m.indexOf(me) >= 0;
+      let joinable = n > 0, leaving = false;
+      for (const i of b.m) { const p = players[i]; if (!p || !p.join) joinable = false; if (p && p.leaving != null && p.leaving >= 0) leaving = true; }
       B.drawCircle({
         x: cx, y: cy, r, mode: 1, cells: total, counts, time,
-        ring: joinable ? [1, 1, 1, 1] : [1, 1, 1, 0.28], ringIn: joinable || mine ? r + unit : 0, ringOut: joinable || mine ? r + 2 * unit : 0,
+        ring: leaving ? rgba(UNGROUP_COLOR, 1) : [1, 1, 1, 1], ringIn: joinable || leaving ? r + 1 : 0, ringOut: joinable || leaving ? r + 2 : 0,
       });
       bodyOf.push({ b, cx, cy, r, n });
     }
 
-    // ---- arrows, crown notch, brand rim, leaver pulse (one batch) ----
-    const arrowSize = 6 * unit, edgeDist = 3 * unit, TWO_MINUS_SQRT3 = 0.2679;
+    // ---- direction arrows (DirectionArrows.cpp: a 6 px triangle 3 px off the edge, intent colour, other
+    // players' at 20%), the crown notch and the brand rim (one batch) ----
+    const arrowSize = 6, edgeDist = 3, TWO_MINUS_SQRT3 = 0.2679;
     for (const { b, cx, cy, r, n } of bodyOf) {
       for (let k = 0; k < b.m.length; k++) {
         const i = b.m[k];
@@ -867,30 +860,18 @@ export function createRenderer(canvas, assets = {}, options = {}) {
         const ang = hasDir ? Math.atan2(dy, dx) : (k / b.m.length) * Math.PI * 2 - Math.PI / 2;
         const color = rgba(PALETTE[(p.intent | 0) & 3], i === me ? 1 : 0.2);
         const dist = r + TWO_MINUS_SQRT3 * arrowSize + edgeDist;
-        if (hasDir) {
-          batch.arrow(cx + dx * dist, cy + dy * dist, dx, dy, arrowSize, color);
-          if (crownOn && n > 1 && b.head === i) {
-            // small gold crown notch beyond the arrow tip
-            const nd = dist + arrowSize * 0.9;
-            batch.poly(cx + dx * nd, cy + dy * nd, 1.6 * unit, 4, rgba(GOLD, i === me ? 1 : 0.85), ang);
-          }
-        } else if (crownOn && n > 1 && b.head === i) {
-          batch.poly(cx + Math.cos(ang) * (r + 2.5 * unit), cy + Math.sin(ang) * (r + 2.5 * unit), 1.6 * unit, 4, rgba(GOLD, 0.85), ang);
+        if (hasDir) batch.arrow(cx + dx * dist, cy + dy * dist, dx, dy, arrowSize, color);
+        if (crownOn && n > 1 && b.head === i) {
+          // a small gold diamond beyond the arrow (or on the rim when the head stands still)
+          const nd = hasDir ? dist + arrowSize * 0.9 : r + 3;
+          batch.poly(cx + Math.cos(ang) * nd, cy + Math.sin(ang) * nd, 2, 4, rgba(GOLD, i === me ? 1 : 0.85), ang);
         }
-        if (p.brand > 0) {
-          // red rim segment centred on the member's direction
-          batch.ring(cx, cy, r + 0.5 * unit, r + 2 * unit, rgba(PALETTE[3], 0.95), ang - 0.45, ang + 0.45, 6);
-        }
-        if (p.leaving != null && p.leaving >= 0) {
-          const ph = 0.5 + 0.5 * Math.sin(time * 10);
-          const rr = r + 2 * unit + 3 * unit * ph;
-          batch.ring(cx, cy, rr, rr + unit, [1, 1, 1, 0.35 + 0.5 * ph]);
-        }
+        if (p.brand > 0) batch.ring(cx, cy, r + 1, r + 2.5, rgba(PALETTE[3], 0.95), ang - 0.45, ang + 0.45, 6);   // red rim segment on the leaver's side
       }
     }
     B.flushShapes(batch);
 
-    // ---- sparks (stun / spill), timed in game seconds (frame.t) ----
+    // ---- sparks: the collision animation (spark.png 6 frames at 2x = 64 px, 240 ms), timed in game seconds ----
     const sparks = state.sparks;
     const gt = frame.t || 0;
     if (state.lastGameT != null && (gt < state.lastGameT - 0.5 || gt > state.lastGameT + 5)) { sparks.length = 0; state.stunSeen.clear(); }
@@ -911,14 +892,13 @@ export function createRenderer(canvas, assets = {}, options = {}) {
       state.stunSeen.set(key, b.stun);
     }
     for (const key of Array.from(state.stunSeen.keys())) if (!seen.has(key)) state.stunSeen.delete(key);
-    const SPARK_DUR = 0.24, SPARK_FRAMES = 6;
+    const SPARK_DUR = 0.24, SPARK_FRAMES = 6, SPARK_PX = 64;
     for (let s = sparks.length - 1; s >= 0; s--) {
       const sp = sparks[s];
       const age = gt - sp.t0;
       if (age < 0 || age >= SPARK_DUR) { sparks.splice(s, 1); continue; }
       const f = Math.min(SPARK_FRAMES - 1, Math.floor(age / SPARK_DUR * SPARK_FRAMES));
-      const size = 48 * unit;
-      B.sprite('spark', X(sp.x) - size / 2, Y(sp.y) - size / 2, size, size, f / SPARK_FRAMES, 0, (f + 1) / SPARK_FRAMES, 1, [1, 1, 1, 1]);
+      B.sprite('spark', Math.round(X(sp.x) - SPARK_PX / 2), Math.round(Y(sp.y) - SPARK_PX / 2), SPARK_PX, SPARK_PX, f / SPARK_FRAMES, 0, (f + 1) / SPARK_FRAMES, 1, [1, 1, 1, 1]);
     }
     if (sparks.length > 64) sparks.splice(0, sparks.length - 64);
 
@@ -926,7 +906,7 @@ export function createRenderer(canvas, assets = {}, options = {}) {
     B.end();
 
     // ---- HUD (full resolution) ----
-    if (opt.hud) drawHUD({ frame, meta, cfg, me, names, myBody, X, Y, scale, ox, oy, bufW, bufH, pix, time });
+    if (opt.hud) drawHUD({ frame, meta, cfg, me, X, Y, scale, pix });
 
     const ms = performance.now() - t0;
     state.stats.frameMs = ms;
@@ -934,16 +914,18 @@ export function createRenderer(canvas, assets = {}, options = {}) {
     state.stats.avgMs = state.stats.avgMs ? state.stats.avgMs * 0.95 + ms * 0.05 : ms;
   }
 
+  // ResourceUIElement: rows of [tinted letter sprite at 2.5x][16 px]["NN/NN" monogram 55 px], right-aligned
+  // 104 px from the right edge (measured on the original: the count's left edge 163 px from the right,
+  // cap tops at 59 px then every 40 px), plus the round clock as a fifth row in the same font.
   function drawHUD(ctx) {
-    const { frame, meta, cfg, me, names, myBody } = ctx;
+    const { frame, meta, cfg, me, X, Y, scale, pix } = ctx;
     const dpr = state.dpr;
     const W = hudCanvas.width, H = hudCanvas.height;
     const banked = me >= 0 && frame.players[me] ? frame.players[me].banked : null;
     const needs = me >= 0 && meta && meta.needs ? meta.needs[me] : null;
     const timeLimit = cfg.time_limit || 240;
     const left = Math.max(0, Math.ceil(timeLimit - frame.t));
-    const name = me >= 0 ? (names[me] || ('player ' + me)) : 'spectator';
-    const key = [W, H, name, left, banked ? banked.map(v => Math.floor(v)).join(',') : '-', needs ? needs.join(',') : '-',
+    const key = [W, H, left, banked ? banked.map(v => Math.floor(v)).join(',') : '-', needs ? needs.join(',') : '-',
       state.fontReady, letters.map(l => !!l).join('')].join('|');
     const dirty = key !== state.hudKey;
     if (dirty) {
@@ -951,127 +933,69 @@ export function createRenderer(canvas, assets = {}, options = {}) {
       hctx.setTransform(1, 0, 0, 1, 0, 0);
       hctx.clearRect(0, 0, W, H);
       hctx.imageSmoothingEnabled = false;
-      const fpx = Math.round(16 * dpr) * 3;    // monogram renders crisp at multiples of its pixel grid
+      const fpx = Math.round(55 * dpr);
       hctx.font = `${fpx}px monogram, "Courier New", monospace`;
-      hctx.textBaseline = 'middle';
+      hctx.textBaseline = 'alphabetic';
+      hctx.textAlign = 'left';
       hctx.fillStyle = '#fff';
-      // resources, top right: tinted letter + count/goal
-      const rowH = fpx * 0.95, padR = 24 * dpr, padT = 22 * dpr;
-      const letterPx = 3 * Math.round(dpr) * 10;
+      const m = hctx.measureText('0');
+      const capH = m.actualBoundingBoxAscent || fpx * 0.44;
+      const rowPitch = Math.round(40 * dpr), capTop = Math.round(59 * dpr);
+      const letterPx = Math.round(25 * dpr), gap = Math.round(16 * dpr);
+      const textLeft = W - Math.round(163 * dpr);
       if (banked && needs) {
         for (let i = 0; i < 4; i++) {
-          const text = pad2(banked[i]) + '/' + pad2(needs[i]);
-          const tw = hctx.measureText('00/00').width;
-          const y = padT + rowH * i + rowH / 2;
-          hctx.textAlign = 'left';
-          const tx = W - padR - tw;
-          hctx.fillStyle = banked[i] >= needs[i] ? PALETTE_CSS[i] : '#fff';
-          hctx.fillText(text, tx, y);
-          drawLetter(hctx, i, tx - letterPx - 12 * dpr, y - letterPx / 2, letterPx);
+          const top = capTop + rowPitch * i;
+          hctx.fillStyle = '#fff';
+          hctx.fillText(pad2(banked[i]) + '/' + pad2(needs[i]), textLeft, top + capH);
+          drawLetter(hctx, i, textLeft - gap - letterPx, top, letterPx);
         }
       }
-      // round timer, top left
-      const tr = 22 * dpr, tx = 24 * dpr + tr, ty = 24 * dpr + tr;
-      hctx.lineWidth = 3 * dpr;
-      hctx.strokeStyle = 'rgba(255,255,255,0.18)';
-      hctx.beginPath(); hctx.arc(tx, ty, tr, 0, Math.PI * 2); hctx.stroke();
-      const frac = Math.max(0, Math.min(1, left / timeLimit));
-      hctx.strokeStyle = frac < 0.15 ? PALETTE_CSS[3] : '#fff';
-      hctx.beginPath(); hctx.arc(tx, ty, tr, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac); hctx.stroke();
-      hctx.font = `${Math.round(16 * dpr) * 2}px monogram, "Courier New", monospace`;
-      hctx.textAlign = 'center';
-      hctx.fillStyle = '#fff';
-      hctx.fillText(String(left), tx, ty + 1 * dpr);
-      // name
-      hctx.textAlign = 'left';
-      hctx.font = `${Math.round(16 * dpr) * 2}px monogram, "Courier New", monospace`;
-      hctx.fillStyle = me >= 0 ? PALETTE_CSS[(frame.players[me] && frame.players[me].intent | 0) & 3] : 'rgba(255,255,255,0.7)';
-      hctx.fillText(name, tx + tr + 12 * dpr, ty);
+      // the round clock as a fifth row (the original has no clock; the HUD block is the one place the edge
+      // indicators never reach)
+      const mm = Math.floor(left / 60), ss = left % 60;
+      hctx.fillStyle = left <= 30 ? PALETTE_CSS[3] : 'rgba(255,255,255,0.75)';
+      hctx.fillText(`${mm}:${ss < 10 ? '0' : ''}${ss}`, textLeft, capTop + rowPitch * 4 + capH);
     }
     B.hud(hudCanvas, dirty);
 
-    // the local player's name under their body (an empty body is nearly invisible) and a 'home' tag on their
-    // pad; when the pad is off screen the tag sticks to the screen edge in its direction
+    // off-screen mines of the local player's intent type: the intent letter at the view edge, 8 units in
+    // (GameObjectRenderer::drawMineDirections); the own pad gets a ring icon the same way
     if (me >= 0 && frame.players[me]) {
-      const { X, Y, pix, scale } = ctx;
-      const lpx = Math.round(16 * dpr) * 2;
-      if (myBody) {
-        const r = (cfg.solo_radius || 0.045) * Math.sqrt(myBody.m.length) * scale * pix;
-        const sx = X(myBody.x) * pix, sy = Y(myBody.y) * pix;
-        const l = label(name, '#ffffff', lpx, true);
-        B.screenSprite(l.name, Math.round(sx - l.w / 2), Math.round(sy + r + 6 * dpr), l.w, l.h, 0, 0, 1, 1, [1, 1, 1, 0.92]);
+      const intent = (frame.players[me].intent | 0) & 3;
+      const pad = 8 * pix, L = Math.round(25 * dpr);
+      const edge = (sx, sy) => ({ x: Math.min(W - pad - L / 2, Math.max(pad + L / 2, sx)), y: Math.min(H - pad - L / 2, Math.max(pad + L / 2, sy)) });
+      if (meta && meta.mine_pos) {
+        const mineR = (cfg.mine_radius || 0.08) * scale * pix;
+        for (let m = 0; m < meta.mine_pos.length; m++) {
+          if ((meta.mine_type ? meta.mine_type[m] : m) !== intent) continue;
+          if (frame.alive && !frame.alive[m]) continue;
+          const sx = X(meta.mine_pos[m][0]) * pix, sy = Y(meta.mine_pos[m][1]) * pix;   // device px
+          if (sx + mineR > 0 && sx - mineR < W && sy + mineR > 0 && sy - mineR < H) continue;
+          const e = edge(sx, sy);
+          B.screenSprite('letter' + intent, Math.round(e.x - L / 2), Math.round(e.y - L / 2), L, L, 0, 0, 1, 1, rgba(PALETTE[intent], 1));
+        }
       }
       if (meta && meta.pads && meta.pads[me] != null) {
         const padR = (cfg.pad_radius || 0.06);
         const R = frame.R != null ? frame.R : 1;
         const padRing = Math.max(R - padR - 0.02, 0.1);
         const a = meta.pads[me];
-        const px = X(padRing * Math.cos(a)) * pix, py = Y(padRing * Math.sin(a)) * pix;
+        const sx = X(padRing * Math.cos(a)) * pix, sy = Y(padRing * Math.sin(a)) * pix;
         const pr = padR * scale * pix;
-        const l = label('home', '#ffffff', lpx, false);
-        if (px + pr > 0 && px - pr < W && py + pr > 0 && py - pr < H) {
-          // keep the tag out of the resource counters in the top-right corner: drop it below the pad there
-          const inHud = px > W - 330 * dpr && py < 250 * dpr;
-          const ty = inHud ? py + pr + l.h : py;
-          B.screenSprite(l.name, Math.round(px - l.w / 2), Math.round(ty - l.h / 2), l.w, l.h, 0, 0, 1, 1, [1, 1, 1, 0.9]);
-        } else {
-          const e = label('> home', '#ffffff', lpx, true);
-          const pad = 8 * dpr;
-          const cx = Math.min(W - pad - e.w / 2, Math.max(pad + e.w / 2, px));
-          const cy = Math.min(H - pad - e.h / 2, Math.max(pad + e.h / 2, py));
-          B.screenSprite(e.name, Math.round(cx - e.w / 2), Math.round(cy - e.h / 2), e.w, e.h, 0, 0, 1, 1, [1, 1, 1, 0.9]);
+        if (!(sx + pr > 0 && sx - pr < W && sy + pr > 0 && sy - pr < H)) {
+          const e = edge(sx, sy);
+          B.screenSprite('padicon', Math.round(e.x - L / 2), Math.round(e.y - L / 2), L, L, 0, 0, 1, 1, [1, 1, 1, 0.9]);
         }
       }
     }
-
-    // off-screen mines of the local player's intent type: letter at the screen edge (original behaviour)
-    if (me >= 0 && meta && meta.mine_pos && frame.players[me]) {
-      const intent = (frame.players[me].intent | 0) & 3;
-      const pad = 8 * dpr, L = 3 * Math.round(dpr) * 10;
-      const { X, Y, pix, scale } = ctx;
-      const mineR = (cfg.mine_radius || 0.08) * scale * pix;
-      for (let m = 0; m < meta.mine_pos.length; m++) {
-        if ((meta.mine_type ? meta.mine_type[m] : m) !== intent) continue;
-        if (frame.alive && !frame.alive[m]) continue;
-        const sx = X(meta.mine_pos[m][0]) * pix, sy = Y(meta.mine_pos[m][1]) * pix;   // device px
-        if (sx + mineR > 0 && sx - mineR < W && sy + mineR > 0 && sy - mineR < H) continue;
-        const cx = Math.min(W - pad - L / 2, Math.max(pad + L / 2, sx));
-        const cy = Math.min(H - pad - L / 2, Math.max(pad + L / 2, sy));
-        B.screenSprite('letter' + intent, cx - L / 2, cy - L / 2, L, L, 0, 0, 1, 1, rgba(PALETTE[intent], 0.9));
-      }
-    }
-  }
-
-  // small text labels as textures (name under the local body, 'home' on the pad); re-rendered when the font arrives
-  const labelCache = {};
-  let labelSeq = 0;
-  function label(text, color, px, boxed) {
-    const key = [text, color, px, boxed, state.fontReady].join('|');
-    let l = labelCache[key];
-    if (l) return l;
-    const c = document.createElement('canvas');
-    const cx = c.getContext('2d');
-    const font = `${px}px monogram, "Courier New", monospace`;
-    cx.font = font;
-    const tw = Math.ceil(cx.measureText(text).width);
-    const w = tw + 8, h = Math.ceil(px * 1.05) + 2;
-    c.width = w; c.height = h;
-    cx.font = font; cx.textBaseline = 'middle'; cx.textAlign = 'left';
-    cx.imageSmoothingEnabled = false;
-    if (boxed) { cx.fillStyle = 'rgba(34,32,52,0.75)'; cx.fillRect(0, 0, w, h); }
-    cx.fillStyle = color;
-    cx.fillText(text, 4, h / 2);
-    l = { canvas: c, name: 'label' + (labelSeq++), w, h };
-    B.texture(l.name, c, true);
-    labelCache[key] = l;
-    return l;
   }
 
   const tintedLetters = {};
   function drawLetter(c, i, x, y, size) {
     const img = letters[i];
     if (!img) {
-      c.save(); c.fillStyle = PALETTE_CSS[i]; c.textAlign = 'center';
+      c.save(); c.fillStyle = PALETTE_CSS[i]; c.textAlign = 'center'; c.textBaseline = 'middle';
       c.fillText(RESOURCE_LETTERS[i].toUpperCase(), x + size / 2, y + size / 2); c.restore();
       return;
     }
@@ -1091,8 +1015,9 @@ export function createRenderer(canvas, assets = {}, options = {}) {
   }
 
   const renderer = {
-    resize, draw, ready,
+    resize, draw, ready, project,
     get mode() { return B.mode; },
+    get view() { return state.view; },
     stats: state.stats,
     camera: state.cam,
     hudCanvas,

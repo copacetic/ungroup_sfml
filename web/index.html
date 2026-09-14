@@ -105,6 +105,17 @@
     <canvas id="c"></canvas>
     <div id="toasts"></div>
     <div id="status" class="hidden"></div>
+    <div id="bar">
+      <button id="bJoin" class="play" title="J / space: let touching bodies merge with you">join: off</button>
+      <button id="bLeave" class="play" title="hold L to leave your group with a share of the pool">leave (hold)</button>
+      <button class="int play i0" data-intent="1" title="1: declare you are after the blue resource">1</button>
+      <button class="int play i1" data-intent="2" title="2: declare you are after the yellow resource">2</button>
+      <button class="int play i2" data-intent="3" title="3: declare you are after the orange resource">3</button>
+      <button class="int play i3" data-intent="4" title="4: declare you are after the red resource">4</button>
+      <button id="bCam" title="C: whole arena / follow me">arena view</button>
+      <button id="bQuit" class="danger">quit</button>
+    </div>
+    <button id="bMenu" title="Tab: players, alliances and events">menu</button>
     <div id="end" class="overlay hidden">
       <div class="box">
         <h2 id="endTitle">round over</h2>
@@ -129,17 +140,7 @@
       <div id="pinfo" class="small dim">-</div>
     </div>
     <div class="sec" id="ctrlSec">
-      <div id="ctrl">
-        <button id="bJoin" class="play" title="J / space: let touching bodies merge with you">join: off</button>
-        <button id="bLeave" class="play" title="hold L to leave your group with a share of the pool">leave (hold)</button>
-        <button class="int play i0" data-intent="1" title="1: declare you are after the blue resource">1</button>
-        <button class="int play i1" data-intent="2" title="2: declare you are after the yellow resource">2</button>
-        <button class="int play i2" data-intent="3" title="3: declare you are after the orange resource">3</button>
-        <button class="int play i3" data-intent="4" title="4: declare you are after the red resource">4</button>
-        <button id="bCam" title="C: whole arena / follow me">arena view</button>
-        <button id="bQuit" class="danger">quit</button>
-      </div>
-      <div id="keys"><kbd>WASD</kbd> move &middot; hold <kbd>mouse</kbd> to steer &middot; <kbd>J</kbd> join &middot; hold <kbd>L</kbd> leave &middot; <kbd>1-4</kbd> intent (colour) &middot; <kbd>C</kbd> camera</div>
+      <div id="keys"><kbd>WASD</kbd> move &middot; hold <kbd>mouse</kbd> to steer &middot; <kbd>J</kbd> join &middot; hold <kbd>L</kbd> leave &middot; <kbd>1-4</kbd> intent (colour) &middot; <kbd>C</kbd> camera &middot; <kbd>Tab</kbd> this panel</div>
     </div>
     <div id="pbody">
       <div class="sec">
