@@ -1,0 +1,61 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Ungroup net demo</title>
+<style>
+  body { margin: 0; padding: 16px; background: rgb(34,32,52); color: #dde; font-family: monospace; font-size: 14px; }
+  h1 { font-size: 16px; margin: 0 0 8px; }
+  #me { color: #9fe0f6; }
+  ul { padding-left: 18px; }
+  li[data-kind=hello] { color: #f3e59a; }
+  .hint { opacity: 0.7; }
+</style>
+</head>
+<body>
+<h1>Ungroup transport demo &mdash; <span id="kind"></span> room <span id="room"></span></h1>
+<div>me: <span id="me">...</span></div>
+<div>peers: <span id="peers">-</span></div>
+<p class="hint">Open this page in two tabs with the same #r=CODE (kind local) or on two machines with #k=rtc&amp;r=CODE. Every tab sends 'hello' {name} to each peer it discovers and logs what it receives.</p>
+<ul id="log"></ul>
+<script type="module">
+import { createTransport } from '../src/net.js';
+
+const q = new URLSearchParams(location.hash.slice(1));
+const room = q.get('r') || 'demo';
+const kind = q.get('k') || 'local';
+const name = q.get('n') || ('tab-' + Math.random().toString(36).slice(2, 6));
+document.getElementById('kind').textContent = kind;
+document.getElementById('room').textContent = room;
+const log = document.getElementById('log');
+const state = { id: null, hellos: [], peers: [], errors: [], ready: false };
+window.__net = state;
+
+function line(kind, text) {
+  const li = document.createElement('li');
+  li.dataset.kind = kind;
+  li.textContent = text;
+  log.appendChild(li);
+}
+function showPeers(t) {
+  state.peers = t.peers();
+  document.getElementById('peers').textContent = state.peers.join(', ') || '-';
+}
+
+try {
+  const t = await createTransport({ kind, room });
+  state.id = t.id;
+  state.transport = t;
+  document.getElementById('me').textContent = t.id + ' (' + name + ')';
+  t.on('hello', (obj, from) => { state.hellos.push({ from, name: obj.name }); line('hello', 'hello from ' + from + ' (' + obj.name + ')'); });
+  t.onPeer((id) => { line('peer', 'peer joined ' + id); showPeers(t); t.send('hello', { name }, id); });
+  t.onLeave((id) => { line('leave', 'peer left ' + id); showPeers(t); });
+  state.ready = true;
+  line('info', 'transport ready');
+} catch (e) {
+  state.errors.push(String(e));
+  line('error', 'transport failed: ' + e.message);
+}
+</script>
+</body>
+</html>

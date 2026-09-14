@@ -1,0 +1,145 @@
+
+===== replicator dynamics, table = pooled 32 rounds (seeds 1000+3000) =====
+  fixed point solo=1.000 bail=0.000 loyal=0.000  payoffs [0.645 0.647 0.608]  eig|.|=[1.003 0.943] -> unstable/saddle invasion fitness: bail +0.002 loyal -0.037
+  fixed point solo=0.000 bail=1.000 loyal=0.000  payoffs [0.617 0.643 0.021]  eig|.|=[0.959 0.033] -> stable invasion fitness: solo -0.027 loyal -0.622
+  fixed point solo=0.000 bail=0.000 loyal=1.000  payoffs [0.589 0.583 0.748]  eig|.|=[0.788 0.78 ] -> stable invasion fitness: solo -0.159 bail -0.165
+  fixed point solo=0.970 bail=0.000 loyal=0.030  payoffs [0.644 0.621 0.644]  eig|.|=[0.964 1.052] -> unstable/saddle
+  fixed point solo=0.000 bail=0.443 loyal=0.557  payoffs [0.607 0.562 0.562]  eig|.|=[1.08 1.34] -> unstable/saddle
+  start -> gen 200 state (moved in last gen)
+   [0.98 0.01 0.01] -> [0.959 0.041 0.   ] (|dx| last gen 5.1e-04) gen50 [0.988 0.011 0.   ]
+   [0.01 0.98 0.01] -> [0. 1. 0.] (|dx| last gen 9.8e-08) gen50 [0.001 0.999 0.   ]
+   [0.01 0.01 0.98] -> [0. 0. 1.] (|dx| last gen 5.2e-24) gen50 [0. 0. 1.]
+   [0.9 0.1 0. ] -> [0.003 0.997 0.   ] (|dx| last gen 1.2e-04) gen50 [0.598 0.402 0.   ]
+   [0.9 0.  0.1] -> [0. 0. 1.] (|dx| last gen 1.3e-20) gen50 [0. 0. 1.]
+   [0.1 0.9 0. ] -> [0. 1. 0.] (|dx| last gen 1.2e-06) gen50 [0.015 0.985 0.   ]
+   [0.  0.9 0.1] -> [0. 1. 0.] (|dx| last gen 3.0e-296) gen50 [0. 1. 0.]
+   [0.1 0.  0.9] -> [0. 0. 1.] (|dx| last gen 6.1e-23) gen50 [0. 0. 1.]
+   [0.  0.1 0.9] -> [0. 0. 1.] (|dx| last gen 6.0e-24) gen50 [0. 0. 1.]
+   [0.333 0.333 0.333] -> [0. 1. 0.] (|dx| last gen 1.8e-05) gen50 [0.168 0.832 0.   ]
+   [0.6 0.2 0.2] -> [0.001 0.999 0.   ] (|dx| last gen 5.0e-05) gen50 [0.362 0.638 0.   ]
+   [0.2 0.6 0.2] -> [0. 1. 0.] (|dx| last gen 4.3e-06) gen50 [0.049 0.951 0.   ]
+   [0.2 0.2 0.6] -> [0. 0. 1.] (|dx| last gen 3.4e-22) gen50 [0. 0. 1.]
+   [0.45 0.45 0.1 ] -> [0. 1. 0.] (|dx| last gen 1.1e-05) gen50 [0.113 0.887 0.   ]
+   [0.1  0.45 0.45] -> [0. 1. 0.] (|dx| last gen 5.1e-06) gen50 [0.057 0.943 0.   ]
+   [0.45 0.1  0.45] -> [0. 0. 1.] (|dx| last gen 9.8e-22) gen50 [0. 0. 1.]
+   [0.  0.5 0.5] -> [0. 1. 0.] (|dx| last gen 1.2e-286) gen50 [0. 1. 0.]
+   [0.  0.4 0.6] -> [0. 0. 1.] (|dx| last gen 8.8e-23) gen50 [0. 0. 1.]
+   [0.  0.6 0.4] -> [0. 1. 0.] (|dx| last gen 2.8e-291) gen50 [0. 1. 0.]
+   [0.5 0.5 0. ] -> [0. 1. 0.] (|dx| last gen 1.0e-05) gen50 [0.105 0.895 0.   ]
+   [0.5 0.  0.5] -> [0. 0. 1.] (|dx| last gen 6.4e-22) gen50 [0. 0. 1.]
+  basins over 1891 grid points (step 1/60): {'solo': 0.0015864621893178213, 'bail': 0.5568482284505553, 'loyal': 0.42781597038603913, 'mixed': 0.013749338974087784}; converged (|dx|<1e-6 at gen 200): 934/1891
+  basins, interior grid points only (1711): {'solo': 0.0005844535359438924, 'bail': 0.5628287551139685, 'loyal': 0.42314436002337813, 'mixed': 0.013442431326709527}
+
+===== replicator dynamics, table = seed 1000, 16 rounds =====
+  fixed point solo=1.000 bail=0.000 loyal=0.000  payoffs [0.645 0.669 0.634]  eig|.|=[1.037 0.983] -> unstable/saddle invasion fitness: bail +0.024 loyal -0.011
+  fixed point solo=0.000 bail=1.000 loyal=0.000  payoffs [0.602 0.614 0.026]  eig|.|=[0.98  0.043] -> stable invasion fitness: solo -0.012 loyal -0.588
+  fixed point solo=0.000 bail=0.000 loyal=1.000  payoffs [0.556 0.628 0.766]  eig|.|=[0.726 0.82 ] -> stable invasion fitness: solo -0.210 bail -0.137
+  fixed point solo=0.990 bail=0.000 loyal=0.010  payoffs [0.645 0.659 0.645]  eig|.|=[1.017 1.022] -> unstable/saddle
+  fixed point solo=0.000 bail=0.448 loyal=0.552  payoffs [0.596 0.554 0.554]  eig|.|=[1.076 1.363] -> unstable/saddle
+  fixed point solo=0.965 bail=0.008 loyal=0.027  payoffs [0.643 0.643 0.643]  eig|.|=[0.986 1.06 ] -> unstable/saddle
+  start -> gen 200 state (moved in last gen)
+   [0.98 0.01 0.01] -> [0.186 0.814 0.   ] (|dx| last gen 1.9e-03) gen50 [0.952 0.048 0.   ]
+   [0.01 0.98 0.01] -> [0. 1. 0.] (|dx| last gen 4.3e-06) gen50 [0.004 0.996 0.   ]
+   [0.01 0.01 0.98] -> [0. 0. 1.] (|dx| last gen 1.4e-20) gen50 [0. 0. 1.]
+   [0.9 0.1 0. ] -> [0.094 0.906 0.   ] (|dx| last gen 9.6e-04) gen50 [0.55 0.45 0.  ]
+   [0.9 0.  0.1] -> [0. 0. 1.] (|dx| last gen 1.2e-26) gen50 [0. 0. 1.]
+   [0.1 0.9 0. ] -> [0.005 0.995 0.   ] (|dx| last gen 9.6e-05) gen50 [0.057 0.943 0.   ]
+   [0.  0.9 0.1] -> [0. 1. 0.] (|dx| last gen 1.1e-272) gen50 [0. 1. 0.]
+   [0.1 0.  0.9] -> [0. 0. 1.] (|dx| last gen 9.8e-30) gen50 [0. 0. 1.]
+   [0.  0.1 0.9] -> [0. 0. 1.] (|dx| last gen 1.0e-19) gen50 [0. 0. 1.]
+   [0.333 0.333 0.333] -> [0.062 0.938 0.   ] (|dx| last gen 7.5e-04) gen50 [0.304 0.696 0.   ]
+   [0.6 0.2 0.2] -> [0.081 0.919 0.   ] (|dx| last gen 8.8e-04) gen50 [0.438 0.562 0.   ]
+   [0.2 0.6 0.2] -> [0.029 0.971 0.   ] (|dx| last gen 4.4e-04) gen50 [0.162 0.838 0.   ]
+   [0.2 0.2 0.6] -> [0. 0. 1.] (|dx| last gen 3.2e-19) gen50 [0. 0. 1.]
+   [0.45 0.45 0.1 ] -> [0.051 0.949 0.   ] (|dx| last gen 6.6e-04) gen50 [0.248 0.752 0.   ]
+   [0.1  0.45 0.45] -> [0.032 0.968 0.   ] (|dx| last gen 4.8e-04) gen50 [0.172 0.828 0.   ]
+   [0.45 0.1  0.45] -> [0. 0. 1.] (|dx| last gen 2.3e-19) gen50 [0. 0. 1.]
+   [0.  0.5 0.5] -> [0. 1. 0.] (|dx| last gen 1.0e-263) gen50 [0. 1. 0.]
+   [0.  0.4 0.6] -> [0. 0. 1.] (|dx| last gen 7.1e-19) gen50 [0. 0. 1.]
+   [0.  0.6 0.4] -> [0. 1. 0.] (|dx| last gen 4.4e-268) gen50 [0. 1. 0.]
+   [0.5 0.5 0. ] -> [0.049 0.951 0.   ] (|dx| last gen 6.5e-04) gen50 [0.24 0.76 0.  ]
+   [0.5 0.  0.5] -> [0. 0. 1.] (|dx| last gen 2.5e-28) gen50 [0. 0. 1.]
+  basins over 1891 grid points (step 1/60): {'solo': 0.0005288207297726071, 'bail': 0.10153358011634056, 'loyal': 0.4309888947646748, 'mixed': 0.46694870438921204}; converged (|dx|<1e-6 at gen 200): 850/1891
+  basins, interior grid points only (1711): {'solo': 0.0, 'bail': 0.08766803039158387, 'loyal': 0.4260666277030976, 'mixed': 0.4862653419053185}
+
+===== replicator dynamics, table = seed 3000, 16 rounds =====
+  fixed point solo=1.000 bail=0.000 loyal=0.000  payoffs [0.644 0.625 0.582]  eig|.|=[0.97  0.903] -> stable invasion fitness: bail -0.019 loyal -0.063
+  fixed point solo=0.000 bail=1.000 loyal=0.000  payoffs [0.631 0.672 0.016]  eig|.|=[0.939 0.023] -> stable invasion fitness: solo -0.041 loyal -0.656
+  fixed point solo=0.000 bail=0.000 loyal=1.000  payoffs [0.623 0.538 0.731]  eig|.|=[0.852 0.737] -> stable invasion fitness: solo -0.108 bail -0.193
+  fixed point solo=0.930 bail=0.070 loyal=0.000  payoffs [0.644 0.644 0.412]  eig|.|=[1.023 0.64 ] -> unstable/saddle
+  fixed point solo=0.951 bail=0.000 loyal=0.049  payoffs [0.645 0.59  0.645]  eig|.|=[0.914 1.082] -> unstable/saddle
+  fixed point solo=0.000 bail=0.436 loyal=0.564  payoffs [0.618 0.57  0.57 ]  eig|.|=[1.084 1.316] -> unstable/saddle
+  start -> gen 200 state (moved in last gen)
+   [0.98 0.01 0.01] -> [1. 0. 0.] (|dx| last gen 7.3e-07) gen50 [0.998 0.002 0.   ]
+   [0.01 0.98 0.01] -> [0. 1. 0.] (|dx| last gen 2.2e-09) gen50 [0. 1. 0.]
+   [0.01 0.01 0.98] -> [0. 0. 1.] (|dx| last gen 2.2e-17) gen50 [0. 0. 1.]
+   [0.9 0.1 0. ] -> [0. 1. 0.] (|dx| last gen 1.7e-05) gen50 [0.754 0.246 0.   ]
+   [0.9 0.  0.1] -> [0. 0. 1.] (|dx| last gen 7.7e-15) gen50 [0.001 0.    0.999]
+   [0.1 0.9 0. ] -> [0. 1. 0.] (|dx| last gen 2.2e-08) gen50 [0.004 0.996 0.   ]
+   [0.  0.9 0.1] -> [0. 1. 0.] (|dx| last gen 0.0e+00) gen50 [0. 1. 0.]
+   [0.1 0.  0.9] -> [0. 0. 1.] (|dx| last gen 2.2e-16) gen50 [0. 0. 1.]
+   [0.  0.1 0.9] -> [0. 0. 1.] (|dx| last gen 1.2e-28) gen50 [0. 0. 1.]
+   [0.333 0.333 0.333] -> [0. 1. 0.] (|dx| last gen 3.5e-07) gen50 [0.067 0.933 0.   ]
+   [0.6 0.2 0.2] -> [0. 1. 0.] (|dx| last gen 1.6e-06) gen50 [0.274 0.726 0.   ]
+   [0.2 0.6 0.2] -> [0. 1. 0.] (|dx| last gen 7.2e-08) gen50 [0.014 0.986 0.   ]
+   [0.2 0.2 0.6] -> [0. 0. 1.] (|dx| last gen 5.5e-16) gen50 [0. 0. 1.]
+   [0.45 0.45 0.1 ] -> [0. 1. 0.] (|dx| last gen 2.0e-07) gen50 [0.039 0.961 0.   ]
+   [0.1  0.45 0.45] -> [0. 1. 0.] (|dx| last gen 9.0e-08) gen50 [0.018 0.982 0.   ]
+   [0.45 0.1  0.45] -> [0. 0. 1.] (|dx| last gen 1.1e-15) gen50 [0. 0. 1.]
+   [0.  0.5 0.5] -> [0. 1. 0.] (|dx| last gen 4.2e-315) gen50 [0. 1. 0.]
+   [0.  0.4 0.6] -> [0. 0. 1.] (|dx| last gen 4.5e-27) gen50 [0. 0. 1.]
+   [0.  0.6 0.4] -> [0. 1. 0.] (|dx| last gen 4.7e-320) gen50 [0. 1. 0.]
+   [0.5 0.5 0. ] -> [0. 1. 0.] (|dx| last gen 1.8e-07) gen50 [0.036 0.964 0.   ]
+   [0.5 0.  0.5] -> [0. 0. 1.] (|dx| last gen 8.4e-16) gen50 [0. 0. 1.]
+  basins over 1891 grid points (step 1/60): {'solo': 0.021152829190904283, 'bail': 0.5526176626123744, 'loyal': 0.4241142252776309, 'mixed': 0.0021152829190904283}; converged (|dx|<1e-6 at gen 200): 1733/1891
+  basins, interior grid points only (1711): {'solo': 0.01928696668614845, 'bail': 0.5587375803623612, 'loyal': 0.41963763880771476, 'mixed': 0.0023378141437755697}
+
+===== pooled payoff along the edges (multinomial random matching) =====
+  edge solo->bail:
+    share_bail=0.0: solo 0.645  bail 0.647  (loyal would get 0.608)
+    share_bail=0.1: solo 0.642  bail 0.658  (loyal would get 0.386)
+    share_bail=0.2: solo 0.639  bail 0.664  (loyal would get 0.242)
+    share_bail=0.3: solo 0.638  bail 0.666  (loyal would get 0.153)
+    share_bail=0.4: solo 0.636  bail 0.667  (loyal would get 0.100)
+    share_bail=0.5: solo 0.635  bail 0.666  (loyal would get 0.070)
+    share_bail=0.6: solo 0.634  bail 0.664  (loyal would get 0.053)
+    share_bail=0.7: solo 0.632  bail 0.660  (loyal would get 0.043)
+    share_bail=0.8: solo 0.630  bail 0.656  (loyal would get 0.034)
+    share_bail=0.9: solo 0.625  bail 0.650  (loyal would get 0.027)
+    share_bail=1.0: solo 0.617  bail 0.643  (loyal would get 0.021)
+  edge solo->loyal:
+    share_loyal=0.0: solo 0.645  loyal 0.608  (bail would get 0.647)
+    share_loyal=0.1: solo 0.641  loyal 0.708  (bail would get 0.584)
+    share_loyal=0.2: solo 0.635  loyal 0.760  (bail would get 0.568)
+    share_loyal=0.3: solo 0.627  loyal 0.782  (bail would get 0.571)
+    share_loyal=0.4: solo 0.622  loyal 0.786  (bail would get 0.578)
+    share_loyal=0.5: solo 0.619  loyal 0.783  (bail would get 0.581)
+    share_loyal=0.6: solo 0.618  loyal 0.777  (bail would get 0.579)
+    share_loyal=0.7: solo 0.618  loyal 0.771  (bail would get 0.573)
+    share_loyal=0.8: solo 0.616  loyal 0.765  (bail would get 0.569)
+    share_loyal=0.9: solo 0.608  loyal 0.759  (bail would get 0.571)
+    share_loyal=1.0: solo 0.589  loyal 0.748  (bail would get 0.583)
+  edge bail->loyal:
+    share_loyal=0.0: bail 0.643  loyal 0.021  (solo would get 0.617)
+    share_loyal=0.1: bail 0.619  loyal 0.125  (solo would get 0.622)
+    share_loyal=0.2: bail 0.601  loyal 0.236  (solo would get 0.622)
+    share_loyal=0.3: bail 0.587  loyal 0.343  (solo would get 0.620)
+    share_loyal=0.4: bail 0.577  loyal 0.438  (solo would get 0.615)
+    share_loyal=0.5: bail 0.567  loyal 0.521  (solo would get 0.610)
+    share_loyal=0.6: bail 0.558  loyal 0.590  (solo would get 0.605)
+    share_loyal=0.7: bail 0.550  loyal 0.647  (solo would get 0.600)
+    share_loyal=0.8: bail 0.546  loyal 0.693  (solo would get 0.596)
+    share_loyal=0.9: bail 0.553  loyal 0.728  (solo would get 0.593)
+    share_loyal=1.0: bail 0.583  loyal 0.748  (solo would get 0.589)
+  centroid payoffs [0.632 0.608 0.569]
+
+===== exploitability of pure lobbies (1 invader + 5 residents) =====
+  pure solo: loyal -0.037 bail +0.009 kidnap -0.036 rammer -0.095  -> best invader bail, gap +0.009
+  pure bail: loyal -0.568 solo -0.043 kidnap -0.409 rammer -0.154  -> best invader solo, gap -0.043
+  pure loyal: bail -0.145 solo -0.186 kidnap -0.189 rammer -0.333  -> best invader bail, gap -0.145
+  (solo/bail/loyal invader margins are pooled over both seeds = 32 rounds; kidnap/rammer are 16 rounds, seed 1000)
+
+===== two invaders (kidnap + rammer) into pure lobbies =====
+  kidnap,rammer,solo,solo,solo,solo: kidnap 0.569 (win/seat 0.12) rammer 0.523 (win/seat 0.12) solo 0.602 (win/seat 0.19)
+  kidnap,rammer,bail,bail,bail,bail: kidnap 0.603 (win/seat 0.19) rammer 0.467 (win/seat 0.00) bail 0.655 (win/seat 0.20)
+  kidnap,rammer,loyal,loyal,loyal,loyal: kidnap 0.632 (win/seat 0.06) rammer 0.445 (win/seat 0.00) loyal 0.689 (win/seat 0.23)

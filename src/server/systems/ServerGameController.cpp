@@ -1,5 +1,7 @@
 #include "ServerGameController.hpp"
 
+#include <iostream>
+
 ServerGameController::ServerGameController(LevelKey level_key, uint32_t tcp_port) :
     GameController(level_key), m_terminalRenderingController(tcp_port),
     m_networkingServer(new NetworkingServer(tcp_port)) {
@@ -72,6 +74,7 @@ void ServerGameController::postUpdate(sf::Int32 update_time) {
             uint32_t winner_player_id;
             std::tie(game_over, winner_player_id) = m_gameObjectController->getGameOver();
             if (game_over) {
+                std::cerr << "Game over. Winner player id: " << winner_player_id << std::endl;
                 m_terminalRenderingController.addWinner(std::to_string(winner_player_id));
                 m_gameStateCore.status = GameStatus::game_over;
                 m_gameStateCore.winner_player_id = winner_player_id;

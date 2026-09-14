@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How to play Ungroup</title>
+<link rel="icon" href="data:,">
+<style>
+@font-face { font-family: 'monogram'; src: url('assets/monogram.ttf') format('truetype'); }
+:root {
+  --bg: rgb(34, 32, 52); --panel: rgba(52, 50, 74, 0.6); --line: #5a587a; --text: #e8e8f2; --dim: #9c9ab8;
+  --A: rgb(159, 224, 246); --B: rgb(243, 229, 154); --C: rgb(243, 181, 155); --D: rgb(243, 156, 156); --gold: rgb(255, 208, 80); --red: #ff5c5c;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body { font-family: monogram, 'Courier New', monospace; font-size: 22px; line-height: 1.25; -webkit-font-smoothing: none; padding: 24px 20px 80px; }
+.wrap { max-width: 900px; margin: 0 auto; }
+h1 { font-size: 56px; margin: 0 0 6px; letter-spacing: 1px; }
+h2 { font-size: 34px; margin: 44px 0 8px; color: var(--text); border-bottom: 2px solid var(--line); padding-bottom: 4px; }
+h3 { font-size: 24px; margin: 22px 0 4px; color: var(--dim); text-transform: lowercase; }
+p { margin: 8px 0; max-width: 70ch; }
+.lead { color: var(--dim); font-size: 24px; }
+a { color: var(--A); }
+.row { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; margin: 12px 0; }
+.row > .txt { flex: 1 1 320px; }
+.fig { flex: 0 0 auto; background: rgba(0,0,0,0.25); border: 2px solid var(--line); padding: 8px; image-rendering: pixelated; }
+.fig svg { display: block; width: 260px; height: 200px; }
+.fig .cap { font-size: 18px; color: var(--dim); max-width: 260px; margin-top: 6px; }
+kbd { display: inline-block; border: 2px solid var(--line); background: rgba(52,50,74,0.9); padding: 0 8px; font-family: inherit; font-size: 20px; line-height: 1.3; }
+table { border-collapse: collapse; width: 100%; max-width: 760px; font-size: 20px; margin: 8px 0; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--dim); font-weight: normal; }
+.sw { display: inline-block; width: 14px; height: 14px; vertical-align: -2px; margin-right: 4px; border: 1px solid #101018; }
+.tip { border-left: 4px solid var(--gold); padding: 6px 12px; background: rgba(255,208,80,0.06); margin: 12px 0; max-width: 70ch; }
+.warn { border-left: 4px solid var(--red); padding: 6px 12px; background: rgba(255,92,92,0.06); margin: 12px 0; max-width: 70ch; }
+ol, ul { padding-left: 1.3em; max-width: 70ch; }
+li { margin: 4px 0; }
+.nav { display: flex; gap: 16px; flex-wrap: wrap; font-size: 20px; margin: 6px 0 18px; }
+.toc { columns: 2; column-gap: 24px; font-size: 20px; max-width: 700px; }
+.toc a { display: block; }
+@media (max-width: 600px) { .toc { columns: 1; } h1 { font-size: 42px; } body { font-size: 20px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav"><a href="index.html">&larr; back to the game</a></div>
+<h1>HOW TO PLAY</h1>
+<p class="lead">Ungroup is a four-minute race for four colours. You mine faster in a group, but only one member gets paid at a time, and anyone can walk out with a share. Merge, mine, bank, betray.</p>
+
+<div class="toc">
+<a href="#goal">1. The goal</a><a href="#arena">2. The arena</a><a href="#mining">3. Mining</a><a href="#groups">4. Groups</a>
+<a href="#banking">5. Banking and the crown</a><a href="#leaving">6. Leaving</a><a href="#brand">7. The brand</a><a href="#collisions">8. Collisions</a>
+<a href="#shrink">9. The shrink</a><a href="#controls">10. Controls and screen</a><a href="#bots">11. The bots</a><a href="#tips">12. Tips</a>
+</div>
+
+<h2 id="goal">1. The goal</h2>
+<div class="row">
+<div class="txt">
+<p>Every player has a private shopping list: <b>18 units of one colour and 6 of each of the other three</b>. Nobody else can see yours. The first player to bank the whole list wins the round. If nobody finishes in four minutes, the player closest to finishing wins.</p>
+<p>Your list is shown top right as four counters, one per colour: <span class="sw" style="background:var(--A)"></span>A blue, <span class="sw" style="background:var(--B)"></span>B yellow, <span class="sw" style="background:var(--C)"></span>C orange, <span class="sw" style="background:var(--D)"></span>D red. <b>Progress</b> is the average of how full the four counters are, so a cheap colour (6 needed) is worth three times as much per unit as your big colour (18 needed).</p>
+</div>
+<div class="fig">
+<svg viewBox="0 0 260 200">
+  <rect x="0" y="0" width="260" height="200" fill="rgb(34,32,52)"/>
+  <g font-family="monogram, monospace" font-size="26" fill="#e8e8f2">
+    <text x="30" y="52" fill="rgb(159,224,246)">A</text><text x="70" y="52">04/06</text>
+    <text x="30" y="92" fill="rgb(243,229,154)">B</text><text x="70" y="92">06/06</text>
+    <text x="30" y="132" fill="rgb(243,181,155)">C</text><text x="70" y="132">02/18</text>
+    <text x="30" y="172" fill="rgb(243,156,156)">D</text><text x="70" y="172">00/06</text>
+  </g>
+  <g font-family="monogram, monospace" font-size="18" fill="#9c9ab8">
+    <text x="170" y="52">2/3</text><text x="170" y="92">done</text><text x="170" y="132">1/9</text><text x="170" y="172">0</text>
+  </g>
+</svg>
+<div class="cap">Banked / needed for each colour. This player is 44 percent of the way.</div>
+</div>
+</div>
+
+<h2 id="arena">2. The arena</h2>
+<div class="row">
+<div class="txt">
+<p>A round disc. Around the rim sit the <b>home pads</b>, one per player; yours is tagged <b>home</b> and an arrow at the screen edge points to it when it is out of view. Inside sit <b>eight mines</b>, two of each colour: an outer ring and an inner ring. A mine is a big circle filled with cells of its colour; the more cells, the more it holds.</p>
+<p>You are a small circle. Your <b>push direction</b> is drawn as a little triangle on your rim, coloured by the colour you have declared you are after (your <b>intent</b>, see below).</p>
+</div>
+<div class="fig">
+<svg viewBox="0 0 260 200">
+  <rect width="260" height="200" fill="rgb(34,32,52)"/>
+  <circle cx="130" cy="100" r="92" fill="rgb(28,26,44)" stroke="#5a587a" stroke-width="2"/>
+  <g fill="none" stroke="#9c9ab8" stroke-width="2">
+    <circle cx="130" cy="14" r="8"/><circle cx="212" cy="58" r="8"/><circle cx="212" cy="142" r="8"/><circle cx="130" cy="186" r="8"/><circle cx="48" cy="142" r="8"/><circle cx="48" cy="58" r="8"/>
+  </g>
+  <circle cx="130" cy="14" r="8" fill="none" stroke="#e8e8f2" stroke-width="3"/>
+  <text x="120" y="42" font-family="monogram, monospace" font-size="14" fill="#e8e8f2">home</text>
+  <g>
+    <circle cx="130" cy="42" r="14" fill="rgb(159,224,246)" opacity="0.9"/><circle cx="185" cy="76" r="14" fill="rgb(243,229,154)" opacity="0.9"/>
+    <circle cx="185" cy="124" r="14" fill="rgb(243,181,155)" opacity="0.9"/><circle cx="130" cy="158" r="14" fill="rgb(243,156,156)" opacity="0.9"/>
+    <circle cx="75" cy="124" r="14" fill="rgb(159,224,246)" opacity="0.9"/><circle cx="75" cy="76" r="14" fill="rgb(243,229,154)" opacity="0.9"/>
+    <circle cx="130" cy="70" r="10" fill="rgb(243,181,155)" opacity="0.9"/><circle cx="130" cy="130" r="10" fill="rgb(243,156,156)" opacity="0.9"/>
+  </g>
+  <circle cx="112" cy="100" r="6" fill="#2f2d45" stroke="#e8e8f2" stroke-width="1.5"/>
+  <polygon points="121,100 116,96 116,104" fill="rgb(243,229,154)"/>
+</svg>
+<div class="cap">Pads on the rim, mines in two rings, you in the middle with a yellow intent arrow.</div>
+</div>
+</div>
+
+<h2 id="mining">3. Mining</h2>
+<p>Touch a mine and units flow into your <b>pool</b>, the coloured cells drawn inside your own circle. A mine drains as you mine it and <b>regrows on its own</b>, faster when its neighbours are full. An empty mine goes dark for a while; move on and come back.</p>
+<p>Speed is the whole game: a solo body mines <b>1 unit every 8 seconds</b>. A pair mines 4 times faster, a trio 9 times, a group of four 16 times. Mining rate grows with the <b>square</b> of the group size, so one partner more than doubles what each member earns.</p>
+<div class="tip">Cheap colours first. Your three 6-unit colours are worth 1/24 of progress per unit; your 18-unit colour only 1/72. Fill the small ones, then grind the big one.</div>
+
+<h2 id="groups">4. Groups</h2>
+<div class="row">
+<div class="txt">
+<p>Press <kbd>J</kbd> to open your door: a <b>white ring</b> appears around you. When two bodies touch and <b>every member of both is open</b>, they merge into one bigger circle with <b>one shared pool</b>. Groups hold up to six.</p>
+<p>A group moves at the average of its members' push directions, and slower the bigger it gets (a pair at 70 percent, a trio at 58 percent of solo speed). Push the same way and you fly; push against each other and you stall. One member who stops pushing simply rides along.</p>
+<p>Nobody in a group can change their declared intent, and you cannot join anyone for 3 seconds after leaving a group, or rejoin the same people for 10 seconds.</p>
+</div>
+<div class="fig">
+<svg viewBox="0 0 260 200">
+  <rect width="260" height="200" fill="rgb(34,32,52)"/>
+  <circle cx="70" cy="100" r="22" fill="#2f2d45" stroke="#e8e8f2" stroke-width="2" stroke-dasharray="4 3"/>
+  <circle cx="63" cy="95" r="5" fill="rgb(159,224,246)"/><circle cx="76" cy="106" r="5" fill="rgb(159,224,246)"/>
+  <text x="50" y="145" font-family="monogram, monospace" font-size="16" fill="#9c9ab8">open, solo</text>
+  <text x="112" y="104" font-family="monogram, monospace" font-size="26" fill="#e8e8f2">+</text>
+  <circle cx="190" cy="100" r="34" fill="#2f2d45" stroke="#e8e8f2" stroke-width="2" stroke-dasharray="4 3"/>
+  <line x1="190" y1="66" x2="190" y2="134" stroke="#101018" stroke-width="1.5"/>
+  <circle cx="176" cy="92" r="5" fill="rgb(159,224,246)"/><circle cx="180" cy="110" r="5" fill="rgb(243,229,154)"/><circle cx="200" cy="90" r="5" fill="rgb(243,229,154)"/><circle cx="204" cy="112" r="5" fill="rgb(243,156,156)"/>
+  <polygon points="190,58 185,66 195,66" fill="rgb(243,229,154)"/>
+  <polygon points="222,98 214,93 214,103" fill="rgb(159,224,246)" opacity="0.5"/>
+  <text x="150" y="160" font-family="monogram, monospace" font-size="16" fill="#9c9ab8">a pair: one pool,</text>
+  <text x="150" y="178" font-family="monogram, monospace" font-size="16" fill="#9c9ab8">two arrows</text>
+</svg>
+<div class="cap">Dashed white ring = door open. Each member's slice shows its arrow.</div>
+</div>
+</div>
+
+<h2 id="banking">5. Banking and the crown</h2>
+<div class="row">
+<div class="txt">
+<p>Nothing counts until it is <b>banked</b>. Solo, touch your own pad and your whole pool is banked to you. In a group, only <b>one</b> member's pad pays out, and it pays out the <b>whole shared pool</b> to that member, with a bonus: 15 percent more per extra member. A pair banks 1.15 times its pool, a trio 1.3 times.</p>
+<p>Which member? The one wearing the <b>crown</b>, a small gold notch on their slice. The crown goes to the member who is <b>furthest from finishing</b> among those who have been with everyone else for at least 10 seconds. It is handed out again after every merge, bank and departure, so a group that stays together keeps feeding whoever is behind. Newcomers wait their 10 seconds before they can wear it; that stops people from touching a full group at its pad and stealing the payout.</p>
+<p>A group has to physically go to the crowned member's pad, so the others carry them there. Banked amounts are whole units; the fraction stays in the pool.</p>
+</div>
+<div class="fig">
+<svg viewBox="0 0 260 200">
+  <rect width="260" height="200" fill="rgb(34,32,52)"/>
+  <circle cx="110" cy="100" r="40" fill="#2f2d45" stroke="#101018" stroke-width="1.5"/>
+  <line x1="110" y1="60" x2="110" y2="140" stroke="#101018" stroke-width="1.5"/><line x1="70" y1="100" x2="150" y2="100" stroke="#101018" stroke-width="1.5"/>
+  <circle cx="95" cy="85" r="5" fill="rgb(243,181,155)"/><circle cx="125" cy="85" r="5" fill="rgb(243,181,155)"/><circle cx="95" cy="115" r="5" fill="rgb(159,224,246)"/><circle cx="125" cy="115" r="5" fill="rgb(243,229,154)"/>
+  <polygon points="138,72 150,70 146,82 152,86 140,88" fill="rgb(255,208,80)" stroke="#101018" stroke-width="1"/>
+  <circle cx="215" cy="40" r="10" fill="none" stroke="#e8e8f2" stroke-width="3"/>
+  <path d="M150 88 Q190 70 208 48" fill="none" stroke="rgb(255,208,80)" stroke-width="2" stroke-dasharray="4 3"/>
+  <text x="40" y="170" font-family="monogram, monospace" font-size="16" fill="#9c9ab8">the crowned member's pad</text>
+  <text x="40" y="188" font-family="monogram, monospace" font-size="16" fill="#9c9ab8">is the only one that pays</text>
+</svg>
+<div class="cap">Gold notch = crown. The whole pool goes to that member at their pad.</div>
+</div>
+</div>
+<div class="tip">If you are ahead, the crown will not come to you for a while. That is the moment to decide: stay and carry, or take your share and go.</div>
+
+<h2 id="leaving">6. Leaving</h2>
+<p>Hold <kbd>L</kbd>. Your slice starts pulsing so everyone can see it, and after <b>2 seconds</b> you are out with a <b>share of the pool</b>. Let go before the time is up and you stay.</p>
+<p>The share is not an even split. Each colour is divided by <b>declared intent</b>: the members who announced that colour get three parts each, everyone else one part, and the leaver's parts are what they take. Then <b>15 percent is forfeited</b> to the group as the price of leaving. You are pushed out the back of the group and cannot join anyone for 3 seconds.</p>
+<p>Declare your intent with <kbd>1</kbd> to <kbd>4</kbd> while you are solo; it is public, shown as the colour of your arrow, and locked once you are in a group. Lying about it costs you: it changes what you would carry out, not what you need.</p>
+
+<h2 id="brand">7. The brand</h2>
+<div class="row">
+<div class="txt">
+<p>Leave with <b>4 or more units</b> and you are <b>branded</b>: a red arc on your rim, for 20 seconds plus 2 per unit taken, up to a minute. Branded players cannot wear the crown while an unbranded member is available, and careful players will not open their door while you are near. Merging with a branded player passes half the mark on to you.</p>
+<p>The brand fades with time, and faster if you bank for other people: every unit that goes to a partner while you are marked shortens it by a second.</p>
+</div>
+<div class="fig">
+<svg viewBox="0 0 260 200">
+  <rect width="260" height="200" fill="rgb(34,32,52)"/>
+  <circle cx="130" cy="100" r="30" fill="#2f2d45" stroke="#101018" stroke-width="1.5"/>
+  <circle cx="122" cy="92" r="5" fill="rgb(243,156,156)"/><circle cx="138" cy="108" r="5" fill="rgb(243,156,156)"/><circle cx="136" cy="90" r="5" fill="rgb(243,229,154)"/>
+  <path d="M100 100 A30 30 0 1 1 160 100" fill="none" stroke="#ff5c5c" stroke-width="4"/>
+  <text x="70" y="165" font-family="monogram, monospace" font-size="16" fill="#9c9ab8">branded for 28 s</text>
+</svg>
+<div class="cap">Red arc = branded. Others will shut their doors.</div>
+</div>
+</div>
+
+<h2 id="collisions">8. Collisions</h2>
+<p>Bump into another body <b>hard</b> and both of you <b>spill</b> some carried units onto the floor as small cells, and both are <b>stunned</b>: no moving, no mining. The faster body is stunned two and a half times longer than its victim, so ramming a loaded group costs the rammer more than the target. Spilled units vanish after 8 seconds; anyone who rolls over them keeps them. Bumps between empty bodies just bounce.</p>
+
+<h2 id="shrink">9. The shrink</h2>
+<p>From <b>two minutes</b> in, the arena shrinks to half its radius by the end. Mines outside the edge die (the outer ring goes at about 3:12) and the pads slide inward with the rim, so the late game is played on the inner four mines with the pads right next to them. Plan your big colour around which inner mine has it.</p>
+
+<h2 id="controls">10. Controls and what the screen shows</h2>
+<table>
+<tr><th>action</th><th>keys</th></tr>
+<tr><td>move</td><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or arrows; or hold the mouse or a finger where you want to go</td></tr>
+<tr><td>open or close your door (joinable)</td><td><kbd>J</kbd> or <kbd>space</kbd></td></tr>
+<tr><td>leave the group</td><td>hold <kbd>L</kbd> for 2 seconds</td></tr>
+<tr><td>declare intent (solo only)</td><td><kbd>1</kbd> A blue, <kbd>2</kbd> B yellow, <kbd>3</kbd> C orange, <kbd>4</kbd> D red</td></tr>
+<tr><td>see the whole arena</td><td><kbd>C</kbd></td></tr>
+</table>
+<table>
+<tr><th>you see</th><th>it means</th></tr>
+<tr><td>coloured cells inside a circle</td><td>the units that body is carrying (or a mine's stock)</td></tr>
+<tr><td>dashed white ring</td><td>door open: touching this body merges with it if you are open too</td></tr>
+<tr><td>small triangle on the rim</td><td>a member's push direction, in the colour of their intent</td></tr>
+<tr><td>gold notch</td><td>the crown: the only pad this group pays out at</td></tr>
+<tr><td>pulsing slice</td><td>that member is leaving in the next two seconds</td></tr>
+<tr><td>red arc</td><td>branded: left with a big share recently</td></tr>
+<tr><td>white spark, body frozen</td><td>stunned after a collision</td></tr>
+<tr><td>pale ring inside the disc</td><td>the shrinking edge; mines outside it are dying</td></tr>
+<tr><td>panel on the right</td><td>every player's progress, group, crown and brand; alliances; the event feed</td></tr>
+</table>
+
+<h2 id="bots">11. The bots</h2>
+<p>Rooms can be filled with scripted bots and with trained agents. Knowing their habits is half the game.</p>
+<table>
+<tr><th>seat</th><th>habit</th></tr>
+<tr><td>solo</td><td>never opens its door; mines and banks alone, slowly and safely</td></tr>
+<tr><td>bail</td><td>groups up to three, then walks out with its share once the pool is worth it or when the group nears a partner's pad</td></tr>
+<tr><td>loyal</td><td>always open, never leaves, carries the group to the crowned pad; shuts its door near branded players</td></tr>
+<tr><td>grudge</td><td>plays loyal but refuses anyone who has publicly left a partner in the last 500 seconds</td></tr>
+<tr><td>kidnap</td><td>joins loaded groups and drags them toward its own pad</td></tr>
+<tr><td>rammer</td><td>never joins; hunts the fullest body, spills it, and picks up the floor</td></tr>
+<tr><td>agent</td><td>a trained policy; forms long alliances, banks well and leaves when it is ahead</td></tr>
+</table>
+
+<h2 id="tips">12. Tips for your first round</h2>
+<ol>
+<li>Open your door at the start and find a partner: two people mine four times as fast as one.</li>
+<li>Mine the colours with 6 in the counter before the one with 18.</li>
+<li>Watch who has the crown. If it is you, steer the group toward your pad once the pool is worth ten units or so. If it is not, you are carrying them; decide whether that is still worth it.</li>
+<li>A leaver takes about a third of a pair's pool and gets branded above four units. Leave when the pool is fat and your pad is close, not in the open.</li>
+<li>Past two minutes, the outer mines die. Be on the inner ring with your big colour when they do.</li>
+<li>Someone hurtling at you with an empty pool is a rammer. Step off the mine; a stationary body is the only thing they can spill.</li>
+</ol>
+<div class="warn">Everything you carry can be lost: to a leaver, to a collision, or to the clock. Bank early, bank often.</div>
+
+<div class="nav" style="margin-top:40px"><a href="index.html">&larr; back to the game</a></div>
+</div>
+</body>
+</html>

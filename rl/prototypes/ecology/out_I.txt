@@ -1,0 +1,14 @@
+I            6solo                early 0.00 len   240 grp 1.00 merges   0.0 leaves   0.0 spills  3.8 banks  18.2 | solo 0.623+-0.010
+I            6bail                early 0.04 len   239 grp 1.34 merges  14.3 leaves  12.8 spills  1.8 banks  37.6 | bail 0.627+-0.016
+I            6loyal               early 0.54 len   205 grp 3.25 merges   4.9 leaves   0.0 spills  0.0 banks  28.3 | loyal 0.706+-0.016
+I            3bail3loyal          early 0.12 len   237 grp 1.90 merges   8.9 leaves   6.1 spills  0.7 banks  35.2 | bail 0.613+-0.026 loyal 0.541+-0.038
+I            3bail3solo           early 0.00 len   240 grp 1.08 merges   4.8 leaves   4.3 spills  3.8 banks  28.8 | bail 0.631+-0.015 solo 0.641+-0.015
+I            2loyal4solo          early 0.75 len   231 grp 1.30 merges   1.0 leaves   0.0 spills  2.0 banks  21.2 | loyal 0.863+-0.023 solo 0.623+-0.017
+I            1solo                early 0.00 len   240 grp 1.00 merges   0.0 leaves   0.0 spills  0.0 banks   3.2 | solo 0.669+-0.029
+I            2loyal               early 0.21 len   238 grp 1.52 merges   1.0 leaves   0.0 spills  0.0 banks  17.2 | loyal 0.787+-0.028
+I            2bail2loyal2kidnap   early 0.04 len   238 grp 1.93 merges   6.0 leaves   3.1 spills  0.2 banks  30.9 | bail 0.548+-0.027 loyal 0.290+-0.065 kidnap 0.264+-0.042
+I            2bail2loyal2rammer   early 0.12 len   238 grp 1.46 merges   6.2 leaves   4.7 spills 18.0 banks  34.5 | bail 0.692+-0.023 loyal 0.702+-0.031 rammer 0.419+-0.015
+I            1loyal5bail          early 0.00 len   240 grp 1.51 merges  11.0 leaves   9.5 spills  1.3 banks  33.8 | loyal 0.038+-0.019 bail 0.571+-0.017
+I            12equal              early 0.08 len   235 grp 1.72 merges  19.3 leaves  15.6 spills 10.5 banks  55.8 | solo 0.597+-0.022 bail 0.541+-0.025 loyal 0.458+-0.039
+I            12loyal              early 0.42 len   218 grp 2.97 merges  13.6 leaves   6.7 spills  2.6 banks  58.3 | loyal 0.638+-0.024 solo 0.554+-0.027 bail 0.656+-0.025
+I            1bail5loyal          early 0.50 len   217 grp 2.85 merges   7.1 leaves   3.0 spills  0.0 banks  34.7 | bail 0.679+-0.032 loyal 0.720+-0.022

@@ -1,0 +1,178 @@
+--- rl/native/ungroup.cpp	2026-09-07 19:35:18.036437527 +0000
++++ /tmp/claude-0/-home-user-ungroup-sfml/90f81c2f-9967-548b-bb7f-131c873074fa/scratchpad/spatial/native/ungroup.cpp	2026-09-12 23:19:03.593332830 +0000
+@@ -46,6 +46,55 @@
+ constexpr int N_PICKUPS_OBS = 4;
+ constexpr int N_DR = 4;           // randomised constants exposed in the observation
+ constexpr double PI = 3.14159265358979323846;
++// ---- prototype knobs (scratch build only) ----
++#ifndef CUR_U0
++#define CUR_U0 0.0
++#endif
++#ifndef CUR_SSTAR
++#define CUR_SSTAR 0.5
++#endif
++#ifndef CUR_REACH
++#define CUR_REACH 0.65
++#endif
++#ifndef CUR_UREP
++#define CUR_UREP CUR_U0
++#endif
++#ifndef CUR_REP_REACH
++#define CUR_REP_REACH CUR_REACH
++#endif
++#ifndef REP_NOTOUCH
++#define REP_NOTOUCH 0
++#endif
++#ifndef RELREP
++#define RELREP 0.0
++#endif
++#ifndef CUR_MAX
++#define CUR_MAX 0.12
++#endif
++#ifndef PAD_G
++#define PAD_G 0.0
++#endif
++#ifndef PAD_REACH
++#define PAD_REACH 0.5
++#endif
++#ifndef PAD_FULL
++#define PAD_FULL 10.0
++#endif
++#ifndef ISL
++#define ISL 0
++#endif
++#ifndef ISL_R0
++#define ISL_R0 0.6
++#endif
++#ifndef ISL_R1
++#define ISL_R1 0.25
++#endif
++#ifndef SEA_LEAK_PERIOD
++#define SEA_LEAK_PERIOD 2.0
++#endif
++#ifndef SEA_U
++#define SEA_U 0.08
++#endif
+ 
+ // Config array layout shared with rl/ungroup/native.py (CFG_FIELDS). Keep in sync.
+ struct Cfg {
+@@ -114,6 +163,7 @@
+     Vec pos, vel;
+     double pool[TYPES] = {0, 0, 0, 0};
+     double stun = 0;  // seconds of stun remaining
++    double sea_t = 0; // seconds spent outside every island since the last leak
+     int n() const { return (int)members.size(); }
+     double pool_total() const { return pool[0] + pool[1] + pool[2] + pool[3]; }
+ };
+@@ -191,9 +241,76 @@
+     double radius(int n) const { return cfg.solo_radius * std::sqrt((double)n); }
+     double need_total(int i) const { double s = 0; for (int t = 0; t < TYPES; t++) s += players[i].need[t]; return s; }
+ 
++    // Islands (M3): after shrink_start the safe region is the union of discs of radius isl_r() around the inner mines.
++    double isl_r() const {
++        double frac = t / cfg.time_limit;
++        if (!ISL || frac <= cfg.shrink_start) return -1.0;
++        double k = std::min(1.0, (frac - cfg.shrink_start) / (1.0 - cfg.shrink_start));
++        return ISL_R0 + (ISL_R1 - ISL_R0) * k;
++    }
++    bool island_centre(int m) const { return ISL && (m % 2 == 1); }
++    int nearest_island(Vec x, double* dist) const {
++        int best = -1; double bd = 1e9;
++        for (int m = 0; m < cfg.n_mines; m++) if (island_centre(m)) { double d = (x - mine_pos[m]).norm(); if (d < bd) { bd = d; best = m; } }
++        if (dist) *dist = bd;
++        return best;
++    }
+     Vec pad_pos(int i) const {
++        double th = players[i].pad_angle;
++        Vec dirv(std::cos(th), std::sin(th));
++        double ri = isl_r();
++        if (ri >= 0) {
++            int best = -1; double bd = 1e9;
++            for (int m = 0; m < cfg.n_mines; m++) if (island_centre(m)) { double d = (mine_pos[m] - dirv * 0.35).norm(); if (d < bd) { bd = d; best = m; } }
++            return mine_pos[best] + dirv * (ri - cfg.pad_radius - 0.02);
++        }
+         double r = std::max(R - cfg.pad_radius - 0.02, 0.1);
+-        return {r * std::cos(players[i].pad_angle), r * std::sin(players[i].pad_angle)};
++        return dirv * r;
++    }
++    // Currents (M1 mine wells, M2 pad wells, M3 sea): an advection velocity added to every body's motion.
++    Vec current_at(const Body& b) const {
++        Vec u;
++        if (CUR_U0 > 0) for (int m = 0; m < cfg.n_mines; m++) {
++            if (!mine_alive[m]) continue;
++            Vec d = mine_pos[m] - b.pos; double dist = d.norm();
++            if (dist < 1e-6) continue;
++            double s = mine_stock[m] / cfg.mine_cap - CUR_SSTAR;
++            if (s >= 0) { if (dist < CUR_REACH) u = u + d * (CUR_U0 * s * (1.0 - dist / CUR_REACH) / dist); }
++            else if (RELREP) {  // expulsion relative to the body's own top speed, measured from the mine edge
++                double de = std::max(0.0, dist - cfg.mine_radius - radius(b.n()));
++                if (REP_NOTOUCH && dist < radius(b.n()) + cfg.mine_radius + 0.01) continue;  // bow wave: the seated body is not ejected
++                if (de < CUR_REP_REACH) {
++                    double vmax = cfg.base_speed / std::sqrt((double)b.n());
++                    double k = std::min(1.0, -s / CUR_SSTAR);
++                    u = u - d * (RELREP * vmax * k * (1.0 - de / CUR_REP_REACH) / dist);
++                }
++            }
++            else if (dist < CUR_REP_REACH) u = u + d * (CUR_UREP * s * (1.0 - dist / CUR_REP_REACH) / dist);
++        }
++        if (PAD_G > 0 && b.pool_total() > 0) for (int j : b.members) {
++            Vec d = pad_pos(j) - b.pos; double dist = d.norm();
++            if (dist < 1e-6 || dist > PAD_REACH) continue;
++            double a = PAD_G * std::min(1.0, b.pool_total() / PAD_FULL);
++            u = u + d * (a * (1.0 - dist / PAD_REACH) / dist);
++        }
++        double ri = isl_r();
++        if (ri >= 0) { double dist; int m = nearest_island(b.pos, &dist); if (m >= 0 && dist > ri) { Vec d = mine_pos[m] - b.pos; u = u + d * (SEA_U / dist); } }
++        double n = u.norm();
++        if (n > CUR_MAX) u = u * (CUR_MAX / n);
++        return u;
++    }
++    void sea_leak() {
++        double ri = isl_r();
++        if (ri < 0) return;
++        for (Body& b : bodies) {
++            double dist; nearest_island(b.pos, &dist);
++            if (dist <= ri) { b.sea_t = 0; continue; }
++            b.sea_t += cfg.dt;
++            if (b.sea_t >= SEA_LEAK_PERIOD) {
++                b.sea_t -= SEA_LEAK_PERIOD;
++                if (b.pool_total() >= 1.0 && spill(b, 1, b.pos) > 0) event("\"kind\":\"leak\",\"a\":" + ids(b.members));
++            }
++        }
+     }
+ 
+     int body_index(int player) const {
+@@ -325,6 +442,7 @@
+         collide_mines();
+         bank();
+         collect_pickups();
++        sea_leak();
+         regen();
+         t += cfg.dt;
+         for (int i = 0; i < cfg.n_players; i++) {
+@@ -346,6 +464,16 @@
+     }
+ 
+     void update_arena() {
++        if (ISL) {
++            R = 1.0;
++            double ri = isl_r();
++            if (ri >= 0) for (int m = 0; m < cfg.n_mines; m++) {
++                if (!mine_alive[m] || island_centre(m)) continue;
++                double d; nearest_island(mine_pos[m], &d);
++                if (d + cfg.mine_radius > ri) { mine_alive[m] = 0; event("\"kind\":\"mine_dead\",\"mine\":" + std::to_string(m)); }
++            }
++            return;
++        }
+         double frac = t / cfg.time_limit;
+         if (frac <= cfg.shrink_start) R = 1.0;
+         else {
+@@ -371,7 +499,7 @@
+             if (pushing > 0) mean = mean * (1.0 / pushing);
+             Vec target = b.stun > 0 ? Vec(0, 0) : mean * (cfg.base_speed / std::sqrt((double)b.n()));
+             b.vel = b.vel + (target - b.vel) * a;
+-            b.pos = b.pos + b.vel * cfg.dt;
++            b.pos = b.pos + (b.vel + current_at(b)) * cfg.dt;
+             double r = radius(b.n());
+             double d = b.pos.norm();
+             double limit = R - r;

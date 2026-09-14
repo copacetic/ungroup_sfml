@@ -1,0 +1,2 @@
+D12      12equal      recov_full_nbrs 24.800000000000004 (n=2)  recov_dead_nbrs 59.5 (n=2) | dormant-pair frac 0.003 vs independent 0.027 (p=0.165) | max dead run 1.00 | front same-direction 0.15384615384615385 (n=13) | arrival stock mean 0.69 sd 0.30 | corr(arrival stock, progress) 0.3954824499477963
+D12      12loyal      recov_full_nbrs 20.9 (n=82)  recov_dead_nbrs 32.0 (n=43) | dormant-pair frac 0.029 vs independent 0.037 (p=0.192) | max dead run 1.15 | front same-direction 0.375 (n=40) | arrival stock mean 0.57 sd 0.33 | corr(arrival stock, progress) -0.13478392996539307

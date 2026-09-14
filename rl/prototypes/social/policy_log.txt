@@ -1,0 +1,4 @@
+base v8_300.pt policy 0.656 bail 0.596 loyal 0.425 early 0.06
+base v4_200.pt policy 0.588 bail 0.634 loyal 0.481 early 0.19
+contag v8_300.pt policy 0.639 bail 0.648 loyal 0.793 early 0.50
+contag v4_200.pt policy 0.624 bail 0.709 loyal 0.789 early 0.25

@@ -20,6 +20,17 @@ Custom engine written in C++11 using the [SFML](https://www.sfml-dev.org/) frame
 
 Created by [@sourenp](https://github.com/SourenP) and [@copacetic](https://github.com/copacetic) mostly for learning purposes.
 
+## Web version
+
+A browser port lives in [`web/`](web/README.md): the same rules as the C++ core used for the
+reinforcement-learning agents (`rl/native/ungroup.cpp`, ported to JavaScript and checked against it),
+the look of the SFML client in WebGL2, and serverless multiplayer over WebRTC (signalling through
+Trystero's public strategies, so a room is just a link and no server of ours exists). Trained agents
+can fill seats through onnxruntime-web, and a bots-only *watch* mode needs no network at all.
+`python3 -m http.server 8080 --directory web` serves it locally; `.github/workflows/pages.yml`
+publishes it to GitHub Pages. Controls, presets, hosting, tests and known gaps are in
+[web/README.md](web/README.md).
+
 ## Build
 
 - You can statically link libraries by setting the cmake flag `-DUNGROUP_STATIC=TRUE`
@@ -85,6 +96,21 @@ The server currently doesn't run on windows ([#194](https://github.com/SourenP/u
 ```
 .\build\src\server\ug-server.exe
 ```
+
+## Offline simulator
+
+`ug-sim` runs bot-vs-bot games with no networking and no window. It is useful for balance
+experiments, for checking rule changes, and as the starting point of an RL environment.
+
+```
+./build/src/sim/ug-sim --games 20 1 1 2 2
+```
+
+Each positional argument is one bot: `0` random, `1` nearest-greedy, `2` groupie,
+`3` nearest-greedy with joinable switched on. Options: `--games N`, `--max-ticks T`,
+`--bot-period K` (ticks between bot decisions), `--verbose`.
+
+See [docs/PRD.md](docs/PRD.md) for an analysis of the game's current state and design.
 
 ## Testing
 
