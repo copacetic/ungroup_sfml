@@ -101,6 +101,12 @@ the signalling state (strategy, trackers answering, peers) and explains what to 
 answers. The `local` transport alone (`#r=CODE&local`, or automatically on `file://` and when Trystero
 cannot be loaded) is the `BroadcastChannel` by itself; it is what the tests use.
 
+**The host's tab runs the game.** Its tick timer lives in a Web Worker, because browsers slow the
+main-thread timers of a background tab to once a second; with the worker the simulation keeps its 30 Hz
+even while the host looks at another tab. Should the timer still be slowed (some browsers throttle
+workers too), the host catches up in one-second bursts, both the host and the clients get a status
+line saying so, and clients widen their playback lag (up to 1.2 s) so movement stays smooth, only late.
+
 **When the host leaves** (closes the tab, loses the connection or crashes) every client shows a
 *host left* overlay within about two seconds and can go back home; the room is gone because the game
 state lived only in the host's page. If the host merely stalled and speaks again the overlay is hidden.

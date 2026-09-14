@@ -68,6 +68,21 @@ function toast(text, cls = '', ms = 3000) {
 function resName(k) { return ['blue', 'yellow', 'orange', 'red'][k & 3]; }
 function amountText(a) { const parts = []; a.forEach((v, k) => { if (v >= 0.5) parts.push(`${v.toFixed(0)} ${resName(k)}`); }); return parts.join(', ') || 'nothing'; }
 
+// The host's tick timer runs in a Web Worker: browsers slow main-thread timers of a background tab to
+// once a second (the game would run in one-second bursts for everyone whenever the host looks at
+// another tab), worker timers keep their rate. Falls back to setInterval when workers are unavailable.
+function hostTimers() {
+  try {
+    if (typeof Worker === 'undefined' || typeof Blob === 'undefined') return {};
+    const src = 'let h=null;onmessage=(e)=>{if(h)clearInterval(h);h=null;if(e.data>0)h=setInterval(()=>postMessage(0),e.data)};';
+    const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+    return {
+      setInterval: (fn, ms) => { const w = new Worker(url); w.onmessage = () => fn(); w.postMessage(Math.max(4, ms | 0)); return w; },
+      clearInterval: (w) => { if (w && w.terminate) { try { w.postMessage(0); w.terminate(); } catch (_) { /* ignore */ } } },
+    };
+  } catch (e) { console.warn('worker timers unavailable', e); return {}; }
+}
+
 // ------------------------------------------------------------------------------------------ renderer
 function ensureRenderer() {
   if (S.renderer) return S.renderer;
@@ -206,6 +221,8 @@ function updatePanel(frame) {
     if (b && b.stun > 0) parts.push('<span class="stun">stunned</span>');
     if (p.brand > 0) parts.push(`<span class="brand">branded ${Math.ceil(p.brand)} s - others see you betrayed</span>`);
     if (p.cd > 0) parts.push(`<span class="cd">join cooldown ${Math.ceil(p.cd)} s</span>`);
+    if (S.host && S.host.throttled) parts.push('<span class="brand">this tab runs the game and the browser is slowing it down - keep it in front</span>');
+    if (S.client && S.client.hostThrottled) parts.push('<span class="brand">the host\'s tab is in the background - the game runs in bursts until they switch back to it</span>');
     st.innerHTML = parts.join('');
     st.classList.toggle('hidden', !parts.length);
     const stunned = !!(b && b.stun > 0);
@@ -466,7 +483,7 @@ async function createRoom(settings, kind) {
   const room = randomCode();
   const t = await makeTransport(kind, room);
   S.mode = 'host'; S.room = room; S.transport = t; S.transportAt = performance.now();
-  const host = new Host(t, settings);
+  const host = new Host(t, settings, hostTimers());
   host._loadAgent = agentLoader(host);   // sets game.decideEvery to the model's cadence once loaded
   S.host = host;
   wireHost(host);
@@ -497,7 +514,7 @@ async function joinRoom(room, kind) {
 }
 
 function watchBots(settings) {
-  const host = new Host(null, Object.assign({ humans: 0, agentUrl: AGENT_MODEL }, settings));
+  const host = new Host(null, Object.assign({ humans: 0, agentUrl: AGENT_MODEL }, settings), hostTimers());
   host._loadAgent = agentLoader(host);
   S.mode = 'watch'; S.kind = null; S.room = null; S.host = host;
   setConn('bots only, no network', 'ok');

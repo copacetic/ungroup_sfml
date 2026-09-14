@@ -353,7 +353,7 @@ test('two peers say hello at the same instant: distinct seats, one spectator whe
   assert.equal(new Set(seatedPeers(host2)).size, seatedPeers(host2).length, 'no peer holds two seats');
 });
 
-test('host tab throttled to 1 Hz for 3 s then resumed: catch-up capped, clients see at most one jump', () => {
+test('host tab throttled to 1 Hz for 3 s then resumed: catch-up in one-second bursts, clients re-settle', () => {
   const w = makeWorld({ latency: 30, jitter: 10 });
   const host = w.host(SETTINGS);
   const c1 = w.client('C1', 'Alice');
@@ -368,20 +368,21 @@ test('host tab throttled to 1 Hz for 3 s then resumed: catch-up capped, clients 
   assert.ok(tickDuring <= 3 * MAX_CATCHUP + 1 && tickDuring >= 2 * MAX_CATCHUP, 'ticks during the throttle ' + tickDuring);
   delete host.pumpEvery;
   const resumedAt = w.clock.now;
-  const after = sampleView(w, c1, host, resumedAt + 4000);
+  const after = sampleView(w, c1, host, resumedAt + 7000);
   const all = before.concat(during, after);
   const s = smoothness(all);
   assert.equal(s.backwards, 0, 'view went backwards');
   assert.ok(s.jumps <= 1, 'jumps (> 150 ms between 33 ms samples): ' + s.jumps);
-  // the host runs at 30 Hz again and the client settles back into a smooth, lagging view
-  const settled = after.filter((q) => q.now > resumedAt + 2500);
+  // the host runs at 30 Hz again; the client burns off the extra lag it allowed during the bursts (at
+  // most 1.3x playback for a few seconds) and settles back into a smooth, lagging view
+  const settled = after.filter((q) => q.now > resumedAt + 5000);
   const ss = smoothness(settled);
   assert.equal(ss.stalls, 0, 'stalls after settling: ' + ss.stalls);
   assert.ok(ss.maxStep <= 0.075, 'max step after settling ' + ss.maxStep);
   assert.ok(Math.abs(ss.span - ss.real) < 0.05, 'real-time playback after settling: ' + ss.span + ' vs ' + ss.real);
   const lags = settled.map((q) => (q.hostT - q.t) * 1000);
   assert.ok(Math.min(...lags) >= 90 && Math.max(...lags) <= 250, 'lag after settling ' + Math.min(...lags).toFixed(0) + '..' + Math.max(...lags).toFixed(0));
-  assert.ok(host.tick >= 30 * 4 + 30 * 2 + 20, 'host kept ticking after resume: ' + host.tick);
+  assert.ok(host.tick >= 30 * 7 + 30 * 2 + 20, 'host kept ticking after resume: ' + host.tick);
 });
 
 test('host leaving mid-round: every client sees host-left within 2 s (clean close and silent crash)', () => {
@@ -518,4 +519,35 @@ test('hostile input: non-finite directions, out-of-range intent and macro classe
   assert.ok(nums.every((v) => Number.isFinite(v)), 'no NaN/Infinity in the host frame');
   assert.ok(f.players.every((q) => q.intent >= 0 && q.intent <= 3), 'intents in range');
   assert.equal(host.running, true);
+});
+
+test('a host whose timer fires once a second: real-time pace in bursts, clients still play smoothly (late) and know why', () => {
+  const w = makeWorld({ latency: 40, jitter: 10, seed: 21 });
+  const host = w.host({ ...SETTINGS, overrides: { time_limit: 60 } });
+  const c1 = w.client('C1', 'Alice');
+  w.run(1500);
+  host.start();
+  w.run(w.clock.now + 2000);
+  assert.equal(host.throttled, false, 'a healthy timer is not flagged');
+  host.pumpEvery = 1000;            // the browser slowed the host's timer to 1 Hz (background tab)
+  const from = w.clock.now, t0 = host.game.t;
+  w.run(from + 4000);
+  assert.ok(host.throttled, 'the host notices its timer is throttled');
+  assert.ok(host.game.t - t0 >= 2.9, 'game time keeps real-time pace in bursts: ' + (host.game.t - t0).toFixed(2) + ' s in 4 s (3 or 4 bursts depending on phase)');
+  assert.ok(c1.hostThrottled, 'the client is told');
+  // the client's view: no spurts (max step between 16 ms samples stays small) once its lag has adapted
+  w.run(w.clock.now + 3000);
+  const ts = [];
+  w.run(w.clock.now + 3000, 16, (now) => { const f = c1.view(now); if (f) ts.push(f.t); });
+  let maxStep = 0, still = 0;
+  for (let i = 1; i < ts.length; i++) { const d = ts[i] - ts[i - 1]; maxStep = Math.max(maxStep, d); if (d < 1e-9) still++; }
+  assert.ok(maxStep < 0.08, 'no burst in the view: max step ' + maxStep.toFixed(3) + ' s per 16 ms');
+  assert.ok(still < ts.length * 0.15, 'the view rarely stands still: ' + still + '/' + ts.length);
+  assert.ok(ts[ts.length - 1] - ts[0] > 2.0, 'and it advances at about real time: ' + (ts[ts.length - 1] - ts[0]).toFixed(2) + ' s in 3 s');
+  // back in front: the flag clears and the lag shrinks again
+  delete host.pumpEvery;
+  w.run(w.clock.now + 2000);
+  assert.equal(host.throttled, false, 'the flag clears once the timer runs normally');
+  w.run(w.clock.now + 500);
+  assert.equal(c1.hostThrottled, false, 'and so does the client\'s');
 });

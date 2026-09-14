@@ -36,7 +36,7 @@ import { randomId } from './net.js';
 
 export const TICK_HZ = 30;
 export const SNAP_EVERY = 2;              // ticks per snapshot -> 15 Hz
-export const MAX_CATCHUP = 10;            // ticks per timer fire
+export const MAX_CATCHUP = 30;            // ticks per timer fire: a host timer throttled to 1 Hz still keeps real-time pace
 export const RESTART_DELAY_MS = 8000;
 export const INPUT_PERIOD_MS = 50;        // 20 Hz
 export const INPUT_KEEPALIVE_MS = 500;
@@ -48,7 +48,7 @@ export const SNAP_MAX_BYTES = 16384;      // wire budget for one snapshot (Tryst
 export const VIEW_LAG_MS = 100;           // nominal distance behind the newest snapshot
 export const VIEW_MAX_EXTRAP_MS = 150;    // dead-reckoning bound when the buffer runs dry
 export const VIEW_JITTER_K = 3;           // target lag = lag + K * mean |arrival jitter|
-export const VIEW_MAX_ADAPT_MS = 400;     // cap on the jitter allowance
+export const VIEW_MAX_ADAPT_MS = 1200;    // cap on the jitter allowance: a host whose timer fires once a second still plays smoothly (late)
 export const VIEW_RATE_SLEW = 0.3;        // playback speed range 0.7x .. 1.3x while re-centring
 export const VIEW_RATE_GAIN_S = 1.0;      // seconds of lag error for full slew
 export const VIEW_RESYNC_S = 1.0;         // further behind than this: jump (once) instead of speeding up
@@ -165,6 +165,8 @@ export class Host {
     this.tick0 = 0;
     this.acc = 0;
     this.lastPump = 0;
+    this._slow = 0;
+    this.throttled = false;   // the timer has been firing far slower than the tick (a background tab)
     this.dtMs = 1000 / TICK_HZ;
     this.pending = [];
     this.inputAt = [];
@@ -214,7 +216,7 @@ export class Host {
       settings: JSON.parse(JSON.stringify(this.settings)),
       seats: this.seats.map((s) => ({ type: s.type, name: s.name, peer: s.peer, ready: s.ready, bot: s.bot || null })),
       host: this.id, running: this.running, round: this.round, notice: this.notice, finished: this.finished,
-      restartAt: this.restartAt, spectators: Array.from(this.spectators),
+      restartAt: this.restartAt, spectators: Array.from(this.spectators), throttled: this.throttled,
     };
   }
   onLobby(cb) { this._lobbyCbs.push(cb); }
@@ -352,7 +354,11 @@ export class Host {
       if (this.transport && now - this._lastLobbySent >= LOBBY_BEAT_MS) { this._lastLobbySent = now; this.transport.send('lobby', { lobby: this.lobby() }); }
       return;
     }
-    this.acc += now - this.lastPump;
+    const gap = now - this.lastPump;
+    // throttle detection: a few consecutive fires far apart set the flag, normal fires clear it
+    if (gap > 400) this._slow = Math.min(6, this._slow + 2); else if (this._slow > 0) this._slow--;
+    this.throttled = this._slow >= 4;
+    this.acc += gap;
     this.lastPump = now;
     let n = Math.floor(this.acc / this.dtMs);
     if (n > MAX_CATCHUP) { n = MAX_CATCHUP; this.acc = 0; } else this.acc -= n * this.dtMs;
@@ -420,7 +426,7 @@ export class Host {
       this.snapCount++;
       if (this.transport) {
         const prev = this._evRing.length ? [].concat(...this._evRing) : [];
-        this.transport.send('snap', { tick: this.tick, round: this.round, frame: f, ev0: this.evSeq, prev });
+        this.transport.send('snap', { tick: this.tick, round: this.round, frame: f, ev0: this.evSeq, prev, thr: this.throttled ? 1 : 0 });
       }
       this.evSeq += evs.length;
       this._evRing.push(evs);
@@ -617,6 +623,7 @@ export class Client {
     }
     this.hostId = obj.lobby.host || from;
     this._hostSeen(from);
+    this.hostThrottled = !!obj.lobby.throttled;
     this.lobby = obj.lobby;
     this._seatFrom(obj.lobby.seats);
     for (const cb of this._lobbyCbs) cb(obj.lobby);
@@ -644,6 +651,7 @@ export class Client {
     if (!this._fromHost(from)) return;
     if (!obj || !validFrame(obj.frame) || !Number.isFinite(obj.tick)) return;
     this._hostSeen(from);
+    this.hostThrottled = !!obj.thr;
     const recv = this.now();
     const t = obj.frame.t;
     const off = recv - t * 1000;

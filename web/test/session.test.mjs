@@ -302,18 +302,18 @@ test('bots-only host runs without any client, ends and restarts after 8 s', () =
   assert.equal(evs.filter((e) => e.kind === 'timeout').length, 2);
 });
 
-test('catch-up is capped at 10 ticks per pump and a throttled host keeps time later', () => {
+test('catch-up is capped at one second of ticks per pump; a stalled host resumes from where it is', () => {
   const clock = { now: 0 };
   const host = new Host(null, { humans: 0, bots: ['solo', 'solo'], preset: 'legacy', seed: 5 }, { now: () => clock.now, manual: true });
   host.start();
-  clock.now = 2000;   // the tab slept for 2 s
+  clock.now = 2000;   // the tab slept for 2 s: one second of ticks, the rest is dropped
   host.pump(clock.now);
-  assert.equal(host.tick, 10);
+  assert.equal(host.tick, 30);
   clock.now = 2033.4;
   host.pump(clock.now);
-  assert.equal(host.tick, 11);
+  assert.equal(host.tick, 31);
   for (; clock.now < 5000; clock.now += 33.3333) host.pump(clock.now);
-  assert.ok(host.tick >= 98 && host.tick <= 101, 'tick ' + host.tick);
+  assert.ok(host.tick >= 118 && host.tick <= 121, 'tick ' + host.tick);
 });
 
 test('interpolation and extrapolation helpers', () => {
