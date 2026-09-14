@@ -128,6 +128,8 @@ h3 { font-size: 22px; margin: 12px 0 4px; font-weight: normal; color: var(--dim)
 #feed li.win { color: var(--gold); font-size: 18px; }
 #feed li.mine { color: var(--C); }
 #keys { font-size: 14px; color: var(--dim); }
+#touchKeys { display: none; font-size: 14px; color: var(--dim); }
+@media (pointer: coarse) { #keys { display: none; } #touchKeys { display: block; } }
 #keys kbd { color: var(--text); }
 
 /* ---- in-game messages over the canvas ---- */
