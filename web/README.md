@@ -69,7 +69,7 @@ Toasts on the canvas explain what just happened to you.
   seat, the rest spectate. Empty human seats sit idle until someone joins; a player who leaves mid-round
   is replaced by a bot, and a page refresh reclaims the seat. Rounds restart 8 s after they end.
 * **Join a room**: open the host's link, or paste the code on the home screen.
-* **Watch bots**: a bots-only game with no network at all, two trained agents in by default. `index.html#watch&bots=bail,loyal,rammer&agents=2&seed=5&preset=life&time=240`
+* **Watch bots**: a bots-only game with no network at all, eight trained agents by default. `index.html#watch&agents=8&seed=5&preset=life&time=240`, or `bots=bail,loyal,rammer` for scripted bots
   starts one directly.
 
 ## Hosting with no server

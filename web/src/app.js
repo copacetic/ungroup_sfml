@@ -172,7 +172,7 @@ function ingestEvents(events) {
 function updatePanel(frame) {
   const cfg = S.cfg || {};
   const t = frame.t;
-  $('ptitle').textContent = S.mode === 'watch' ? 'watching bots' : 'room ' + S.room;
+  $('ptitle').firstChild.textContent = S.mode === 'watch' ? 'watching bots' : 'room ' + S.room;
   const who = S.me >= 0 ? `you: ${pname(S.me)} (seat ${S.me + 1})` : 'spectator';
   $('pinfo').textContent = `round ${S.round} · ${who} · ${S.conn || S.kind || 'no network'} · t ${t.toFixed(0)}s`;
 
@@ -336,6 +336,7 @@ function bindInput() {
   for (const b of document.querySelectorAll('#bar .int')) b.addEventListener('click', () => declareIntent(+b.dataset.intent));
   $('bCam').addEventListener('click', () => { S.arena = !S.arena; });
   $('bMenu').addEventListener('click', () => setPanel(!S.panel));
+  $('bClose').addEventListener('click', () => setPanel(false));
   $('bQuit').addEventListener('click', quit);
   $('endLeave').addEventListener('click', quit);
   $('hostLeftHome').addEventListener('click', quit);
@@ -669,7 +670,7 @@ async function main() {
   fetch(AGENT_MODEL.replace(/\.onnx$/, '.json'), { method: 'HEAD' }).then((r) => {
     S.agentOk = r.ok;
     $('agents').disabled = !r.ok;
-    if (r.ok && !(+$('agents').value)) $('agents').value = 2;
+    if (!r.ok) $('agents').value = 0;   // the field defaults to eight trained agents; none without a model
     $('agentNote').textContent = r.ok ? 'model: ' + AGENT_MODEL + ' (onnxruntime from the CDN)' : 'no model found';
   }).catch(() => { $('agentNote').textContent = 'no model (agents need an http(s) host)'; });
 
@@ -681,7 +682,7 @@ async function main() {
   });
   $('watch').addEventListener('click', () => {
     const st = readSettings();
-    if (!st.bots.length && !st.agents) { st.bots = ['bail', 'loyal', 'loyal', 'solo']; st.agents = S.agentOk ? 2 : 0; }
+    if (!st.bots.length && !st.agents) { st.agents = S.agentOk ? 8 : 0; if (!st.agents) st.bots = ['bail', 'loyal', 'loyal', 'solo']; }
     watchBots({ bots: st.bots, agents: st.agents, preset: st.preset, overrides: st.overrides, seed: st.seed, rounds: st.rounds });
   });
   $('join').addEventListener('click', async () => {
@@ -704,8 +705,8 @@ async function main() {
   $('leaveLobby').addEventListener('click', quit);
 
   if (h.has('watch')) {
-    const bots = (h.get('bots') || 'bail,loyal,loyal,solo').split(',').filter((b) => BOT_TYPES.includes(b));
-    const agents = Math.max(0, Math.min(8, h.has('agents') ? (h.get('agents') | 0) : 2));   // trained agents fall back to solo bots when the model cannot load
+    const bots = (h.get('bots') || '').split(',').filter((b) => BOT_TYPES.includes(b));
+    const agents = Math.max(0, Math.min(8, h.has('agents') ? (h.get('agents') | 0) : (bots.length ? 0 : 8)));   // trained agents fall back to solo bots when the model cannot load
     watchBots({ bots: bots.length || agents ? bots : ['solo'], agents, preset: $('preset').value, overrides: { time_limit: +(h.get('time') || 240) }, seed: +(h.get('seed') || 0), rounds: 0 });
   } else if (h.get('r')) {
     $('joinCode').value = h.get('r').toUpperCase();

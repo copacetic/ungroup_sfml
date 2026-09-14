@@ -21,17 +21,17 @@
       <div class="card" id="createCard">
         <h2>Create a room</h2>
         <div class="row">
-          <label>human seats <input id="humans" type="number" min="1" max="8" value="1"></label>
-          <label>agent seats <input id="agents" type="number" min="0" max="8" value="0" disabled></label>
+          <label>human seats <input id="humans" type="number" min="1" max="8" value="2"></label>
+          <label>agent seats <input id="agents" type="number" min="0" max="8" value="8" disabled></label>
           <span id="agentNote" class="small dim">checking for a model...</span>
         </div>
-        <h3>bots</h3>
+        <h3>scripted bots <span class="small dim">(optional; the agent seats are the trained players)</span></h3>
         <div class="bots">
-          <label>solo <input class="bot" data-bot="solo" type="number" min="0" max="8" value="1"></label>
-          <label>bail <input class="bot" data-bot="bail" type="number" min="0" max="8" value="2"></label>
-          <label>loyal <input class="bot" data-bot="loyal" type="number" min="0" max="8" value="2"></label>
+          <label>solo <input class="bot" data-bot="solo" type="number" min="0" max="8" value="0"></label>
+          <label>bail <input class="bot" data-bot="bail" type="number" min="0" max="8" value="0"></label>
+          <label>loyal <input class="bot" data-bot="loyal" type="number" min="0" max="8" value="0"></label>
           <label>kidnap <input class="bot" data-bot="kidnap" type="number" min="0" max="8" value="0"></label>
-          <label>rammer <input class="bot" data-bot="rammer" type="number" min="0" max="8" value="1"></label>
+          <label>rammer <input class="bot" data-bot="rammer" type="number" min="0" max="8" value="0"></label>
           <label>grudge <input class="bot" data-bot="grudge" type="number" min="0" max="8" value="0"></label>
         </div>
         <div class="row">
@@ -149,7 +149,7 @@
   </div>
   <aside id="panel">
     <div class="sec">
-      <div id="ptitle">-</div>
+      <div id="ptitle">-<button id="bClose" title="close (Tab)">close</button></div>
       <div id="pinfo" class="small dim">-</div>
     </div>
     <div class="sec" id="ctrlSec">
