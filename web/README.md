@@ -3,7 +3,8 @@
 A static, serverless port of Ungroup: `index.html` plus ES modules under `src/`, no bundler, no
 framework, no backend. The rules core is a line-by-line JavaScript port of the canonical C++ engine
 (`rl/native/ungroup.cpp`, the same core the reinforcement-learning agents are trained on), the renderer
-reproduces the look of the SFML client (WebGL2 Voronoi cells, pixel-art upscaling, parallax dots), and
+reproduces the look of the SFML client (a 1x world buffer upscaled 3x with nearest sampling, a camera
+that chases you, Voronoi cells, the dotted background, the letter HUD), and
 multiplayer is host-authoritative over WebRTC with signalling through Trystero's public strategies, so
 there is no server of ours anywhere. Trained policies (`models/*.onnx`) can fill seats through
 onnxruntime-web.
@@ -41,11 +42,14 @@ their neighbours (bloom / life).
 | `J` or space | toggle *joinable* (touching bodies merge with you) |
 | hold `L` | leave the group (release to cancel) |
 | `1` `2` `3` `4` | declare an intent: the resource type you want (also colours your arrow) |
-| `C` | toggle the whole-arena camera |
+| `C` | toggle the whole-arena camera (the default is the original's close chase camera) |
+| `Tab` or the `menu` button | open the panel: every player's progress, banked counts, group, crown, brand, leaving/stunned/cooldown state, the alliances and an event feed |
 
-Touch devices get on-screen buttons. The right-hand panel shows every player's progress, banked
-counts, group, crown, brand, leaving/stunned/cooldown state, the alliances and an event feed; toasts on
-the canvas explain what just happened to you.
+The game screen is the plain view of the original client: the buttons and the panel are hidden until
+you open them (touch devices always get the buttons). The HUD is the original's: your four counts as
+`banked/needed` with the tinted letters, off-screen mines of your declared type as a letter at the edge
+of the view, your pad as a ring icon when it is off screen, and the round clock under the counts.
+Toasts on the canvas explain what just happened to you.
 
 **Presets** (the rule packages from `rl/ungroup/native.py`)
 
@@ -101,8 +105,9 @@ back (same tab, refresh) reclaims its seat.
 
 **Browsers.** Any current Chromium, Firefox or Safari with WebGL2 (the renderer falls back to a 2D
 canvas without it, with blobbier cells). WebRTC data channels and `BroadcastChannel` are needed for the
-two transports. Touch devices get on-screen buttons, but the arena is sized for a desktop window
-(unit disc ≈ 900 CSS px) and the panel stacks below the canvas on narrow screens.
+two transports. Touch devices get on-screen buttons. The chase camera shows the same slice of the
+world as the original's 1080x810 window did (3 CSS px per world pixel, 2 on screens narrower than
+700 px), and the panel slides over the canvas on narrow screens.
 
 ## Tests
 
@@ -118,6 +123,8 @@ node web/test/conformance.mjs --skip-ladder                              # the f
 OMP_NUM_THREADS=1 python3 web/test/reference.py                          # regenerate test/reference.json from the C++ core (needs rl/)
 PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers node web/test/net_local.pw.mjs # two tabs exchange hello over BroadcastChannel
 PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers node web/test/e2e.mjs          # the whole app: create, join, play, watch (screenshots in --shots DIR)
+PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers node web/test/shots.mjs DIR     # game-screen screenshots at 1080x810 for comparison with the original client
+PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers node web/test/playtest.mjs DIR  # a scripted human plays a round through the UI, screenshots every 20 s
 ```
 
 `web/test/README.md` describes the conformance methodology (why the ladder is compared statistically:
@@ -131,7 +138,7 @@ the shipped C++ core uses FMA, the JS engine reproduces a `-ffp-contract=off` bu
 | `index.html`, `src/app.js`, `src/ui.css` | the app: home (create / join / watch), lobby with share link, game screen (canvas, HUD, panel, toasts), end screen with play-again countdown, spectator and host-left overlays, keyboard / pointer / touch input, hash routing (`#r=CODE[&local][&n=NAME]`, `#watch[&bots=..&seed=..&preset=..&time=..]`) |
 | `src/engine.js` | the rules core, ported function by function from `rl/native/ungroup.cpp`: `CONFIG_DEFAULTS`, `PRESETS`, `preset()`, `Game` (`reset`, `setSeats`, `setInput`, `tick`/`step`, `frame()`/`meta()` in the replay schema, `observe()` in the v3 layout, `stats`, the six scripted bots, macro targets) |
 | `src/rng.js` | `std::mt19937_64` plus the libstdc++ `uniform_real`, `uniform_int`, `discrete_distribution` algorithms, so a seed produces the same needs, pads and mines as the C++ core |
-| `src/render.js` | `createRenderer(canvas, assets)`: the look of the SFML client (dark disc, parallax dotted layers, `voronoi_counts` cells for bodies and mines, direction arrows in intent colours, crown notch, brand rim, shrink ring, leaving pulse, spark on collisions, letter HUD in the monogram font) in WebGL2 with a 2D-canvas fallback |
+| `src/render.js` | `createRenderer(canvas, assets)`: the look of the SFML client (the 1x world buffer blitted up with nearest sampling, chase camera, dark disc with the grey out-of-bounds, the two dotted layers, `voronoi_counts` cells for bodies and mines, direction arrows in intent colours, joinable / ungroup rings, sparks on collisions, the letter HUD in the monogram font) plus the pixel-style extras for the new rules (pads, crown notch, brand rim, pickups, clock) in WebGL2 with a 2D-canvas fallback (`#...&2d` forces it) |
 | `src/net.js` | `createTransport({kind, room})`: `local` (BroadcastChannel with heartbeats) and `rtc` (Trystero over WebRTC; torrent / nostr / mqtt signalling, pinned version) behind one `{id, peers, onPeer, onLeave, send, on, close}` interface |
 | `src/session.js` | `Host` and `Client`: lobby, `hello`/`lobby`/`start`/`input`/`snap`/`end` protocol, 30 Hz fixed-step engine on the host, 15 Hz snapshots with an event window, input validation and stale-input timeout, seat reclaim by token, host heartbeat and host-left detection, rate-controlled interpolated client view, automatic round restart |
 | `src/agent.js` | `loadAgent(url)`: a trained policy from `models/*.onnx` through onnxruntime-web, returning `act(obs) -> [move, join, leave, intent]` |
@@ -157,7 +164,8 @@ the shipped C++ core uses FMA, the JS engine reproduces a `-ffp-contract=off` bu
 * Engine numerics: resets are bit-exact with the C++ core, and whole games match a `-ffp-contract=off`
   build frame for frame, but the shipped `libungroup.so` uses FMA, so long games diverge chaotically
   from it at contact thresholds; only statistics are compared, not trajectories.
-* The 2D-canvas fallback approximates the Voronoi cells with blobs and alpha-blends the mine pattern.
+* The 2D-canvas fallback approximates the Voronoi cells with blobs and anti-aliases the circle edges.
 * `dev/render_demo.html` needs `dev/sample_replay.json`, which is git-ignored; generate one with
   `record_game` from `rl/ungroup/native.py`.
-* Pointer steering under the whole-arena camera uses the renderer's approximate scale.
+* The chase camera shows about a third of the arena, as the original did; the whole-arena view (`C`)
+  is the way to see everyone at once.
