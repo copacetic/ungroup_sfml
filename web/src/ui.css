@@ -79,7 +79,7 @@ h3 { font-size: 22px; margin: 12px 0 4px; font-weight: normal; color: var(--dim)
 #panel { flex: 0 0 320px; width: 320px; background: var(--panel); border-left: 2px solid var(--line); display: none; flex-direction: column; overflow: hidden; font-size: 18px; }
 #game.panel #panel { display: flex; }
 /* the buttons live on the canvas: always on touch screens, otherwise with the panel */
-#bar { position: absolute; left: 12px; bottom: 12px; display: none; flex-wrap: wrap; gap: 6px; z-index: 6; max-width: calc(100% - 24px); }
+#bar { position: absolute; left: 12px; bottom: 48px; display: none; flex-wrap: wrap; gap: 6px; z-index: 6; max-width: calc(100% - 24px); }
 #game.panel #bar { display: flex; }
 @media (pointer: coarse) { #bar { display: flex; } }
 #bar button { font-size: 16px; padding: 3px 8px; background: rgba(34, 32, 52, 0.85); }
@@ -87,7 +87,7 @@ h3 { font-size: 22px; margin: 12px 0 4px; font-weight: normal; color: var(--dim)
 #bar .int { width: 34px; padding: 3px 0; border-color: currentColor; }
 #bar .int.i0 { color: var(--A); } #bar .int.i1 { color: var(--B); } #bar .int.i2 { color: var(--C); } #bar .int.i3 { color: var(--D); }
 #bar .int.on { background: #55537a; box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px currentColor; }
-#bMenu { position: absolute; right: 12px; bottom: 12px; z-index: 6; font-size: 16px; padding: 3px 10px; background: rgba(34, 32, 52, 0.6); border-color: #3c3a56; color: var(--dim); }
+#bMenu { position: absolute; right: 48px; bottom: 48px; z-index: 6; font-size: 16px; padding: 3px 10px; background: rgba(34, 32, 52, 0.6); border-color: #3c3a56; color: var(--dim); }
 #bMenu:hover, #bMenu.on { color: var(--text); border-color: var(--line); }
 #panel .sec { padding: 8px 10px; border-bottom: 2px solid var(--line); }
 #pbody { flex: 1 1 auto; overflow: auto; min-height: 0; display: flex; flex-direction: column; }
@@ -141,7 +141,7 @@ h3 { font-size: 22px; margin: 12px 0 4px; font-weight: normal; color: var(--dim)
 #toasts div.hint { color: var(--dim); }
 #toasts div.fade { opacity: 0; transition: opacity 0.4s; }
 @keyframes toastin { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
-#status { position: absolute; left: 24px; top: 24px; font-size: 22px; pointer-events: none; z-index: 5; display: flex; flex-direction: column; gap: 2px; }
+#status { position: absolute; left: 48px; top: 48px; font-size: 22px; pointer-events: none; z-index: 5; display: flex; flex-direction: column; gap: 2px; }
 #status span { display: inline-block; padding: 0 6px; background: rgba(34, 32, 52, 0.7); }
 #status .join { color: var(--A); }
 #status .leave { color: var(--B); animation: pulse 0.3s infinite alternate; }
@@ -183,7 +183,7 @@ h3 { font-size: 22px; margin: 12px 0 4px; font-weight: normal; color: var(--dim)
   #panel { flex-basis: 260px; width: 260px; font-size: 16px; }
   #panel .sec { padding: 6px 8px; }
   #toasts div { font-size: 20px; }
-  #status { font-size: 18px; top: 16px; left: 16px; }
+  #status { font-size: 18px; top: 44px; left: 44px; }
 }
 @media (max-width: 760px) {
   #panel { position: absolute; right: 0; top: 0; bottom: 0; width: 78%; z-index: 8; font-size: 16px; }

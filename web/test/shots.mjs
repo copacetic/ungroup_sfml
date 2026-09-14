@@ -44,7 +44,11 @@ await shot('chase_start');
 await page.keyboard.down('KeyD'); await page.waitForTimeout(2500); await shot('chase_moving_right');
 await page.keyboard.up('KeyD'); await page.keyboard.down('KeyW'); await page.keyboard.press('KeyJ'); await page.waitForTimeout(2500); await shot('chase_joinable_up');
 await page.keyboard.up('KeyW');
-await page.waitForTimeout(6000); await shot('chase_later');
+// mine hits: sample the live spark count for a few seconds (bots are mining by now)
+let sparkSamples = 0, sparkMax = 0, sparkHits = 0;
+for (let i = 0; i < 40; i++) { const n = await page.evaluate(() => window.__app.renderer.sparks); sparkSamples++; sparkMax = Math.max(sparkMax, n); if (n > 0) sparkHits++; await page.waitForTimeout(150); }
+console.log(`sparks: ${sparkHits}/${sparkSamples} samples had sparks (max ${sparkMax})`);
+await shot('chase_later');
 await page.keyboard.press('KeyC'); await page.waitForTimeout(1200); await shot('arena');
 await page.keyboard.press('Tab'); await page.waitForTimeout(400); await shot('arena_panel');
 await page.keyboard.press('Tab'); await page.keyboard.press('KeyC'); await page.waitForTimeout(8000); await shot('chase_end');

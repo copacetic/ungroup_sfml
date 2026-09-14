@@ -40,9 +40,8 @@
 // buffer, then the spark frames (spark.png, 6 frames, 2x, 240 ms). The HUD is the original's
 // ResourceUIElement: tinted 10 px letter sprites at 2.5x and "NN/NN" in monogram at 55 px, top right,
 // plus off-screen mine letters at the view edge; it is drawn on a 2D canvas at full resolution and
-// uploaded as a texture only when its content changes. Without WebGL2 a 2D canvas fallback draws the
-// same scene into a low resolution offscreen canvas; the cells are approximated by blobs at the animated
-// cell centres (no true Voronoi partition).
+// uploaded as a texture only when its content changes. Without WebGL2 a 2D canvas fallback rasterises the
+// same scene by hand into a low resolution offscreen canvas (per-pixel cells, no anti-aliasing).
 
 export const PALETTE = [[159, 224, 246], [243, 229, 154], [243, 181, 155], [243, 156, 156]];
 export const PALETTE_CSS = PALETTE.map(c => `rgb(${c[0]},${c[1]},${c[2]})`);
@@ -52,7 +51,7 @@ export const UNGROUP_COLOR = [0, 146, 199];             // the original's ring o
 export const GOLD = [255, 208, 80];
 export const UNIT_PX = 450;         // buffer px per world unit (R = 1) at zoom 1: a mine (r 0.08) is 72 px across, near the original's 80
 export const PIXEL_SCALE = 3;       // css px per buffer px (the original upscales its 1x buffer 3x)
-export const ARENA_PIXEL_SCALE = 2; // css px per buffer px in the whole-arena view
+export const ARENA_PIXEL_SCALE = 2; // css px per buffer px in the whole-arena view (a map: finer blocks on purpose)
 export const WORLD_PX = UNIT_PX * PIXEL_SCALE;   // css px per world unit at zoom 1 (1500: the arena is 3000 px across)
 export const CAMERA_CHASE = 0.5;    // lerp factor per 8 ms step, like the original (CAMERA_CHASE * MIN_TIME_STEP_SEC * dt)
 export const MAX_CELLS = 30;
@@ -510,7 +509,8 @@ function makeGL(canvas) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.disable(gl.BLEND);
-    B._sprite(B.fboTex, 0, 0, B.bufW * B.pix, B.bufH * B.pix, 0, 1, 1, 0, [1, 1, 1, 1], canvas.width, canvas.height);
+    const sh = B.shift || [0, 0];
+    B._sprite(B.fboTex, sh[0], sh[1], B.bufW * B.pix, B.bufH * B.pix, 0, 1, 1, 0, [1, 1, 1, 1], canvas.width, canvas.height);
     gl.enable(gl.BLEND);
   };
   B.screenSprite = (name, x, y, w, h, u0, v0, u1, v1, tint) => {
@@ -528,7 +528,8 @@ function makeGL(canvas) {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// 2D canvas backend (fallback). Cells are approximated by blobs at the animated cell centres.
+// 2D canvas backend (fallback): the same scene rasterised by hand on the buffer grid (pixel-centre tests,
+// per-pixel Voronoi cells, no anti-aliasing) so it looks like the WebGL path, only slower.
 // ---------------------------------------------------------------------------------------------------
 
 function make2D(canvas) {
@@ -563,7 +564,14 @@ function make2D(canvas) {
     octx.fillStyle = css(p.oob);
     octx.fillRect(0, 0, bufW, bufH);
     octx.fillStyle = css(BACKGROUND_COLOR);
-    octx.beginPath(); octx.arc(p.ox, p.oy, p.R * p.scale, 0, Math.PI * 2); octx.fill();
+    const rr = p.R * p.scale;
+    for (let y = Math.max(0, Math.floor(p.oy - rr)); y <= Math.min(bufH - 1, Math.ceil(p.oy + rr)); y++) {
+      const dy = y + 0.5 - p.oy;
+      if (Math.abs(dy) > rr) continue;
+      const hw = Math.sqrt(rr * rr - dy * dy);
+      const xa = Math.ceil(p.ox - hw - 0.5), xb = Math.floor(p.ox + hw - 0.5);
+      if (xb >= xa) octx.fillRect(xa, y, xb - xa + 1, 1);
+    }
     const layer = (k, offx, offy, alpha, half) => {
       const img = dotsScaled(k);
       if (!img) return;
@@ -576,40 +584,66 @@ function make2D(canvas) {
     layer(1, p.off2x, p.off2y, 0.7, true);
     layer(2, p.off1x, p.off1y, 0.8, false);
   };
+  // A circle rasterised with the pixel-centre test of the WebGL path (d <= r), the cells a true Voronoi
+  // partition per pixel, rings for ringIn <= d < ringOut; alpha is blended by hand (no anti-aliasing).
   B.drawCircle = (c) => {
-    octx.save();
-    octx.beginPath(); octx.arc(c.x, c.y, c.r, 0, Math.PI * 2); octx.closePath();
-    if (c.mode === 0) {
-      octx.fillStyle = css([c.fill[0] * 255, c.fill[1] * 255, c.fill[2] * 255], c.fill[3]);
-      octx.fill();
-    } else {
-      octx.clip();
-      octx.fillStyle = 'rgba(255,255,255,0.05)';
-      octx.fillRect(c.x - c.r, c.y - c.r, 2 * c.r, 2 * c.r);
-      const cells = Math.min(MAX_CELLS, c.cells | 0);
-      if (cells > 0) {
-        const types = cellTypes(c.counts, cells);
-        const br = c.r * Math.max(0.55, 1.5 / Math.sqrt(cells));
-        for (let i = 0; i < cells; i++) {
-          if (types[i] < 0) continue;
-          const [px, py] = cellPoint(i, c.time);
-          octx.fillStyle = PALETTE_CSS[types[i]];
-          octx.beginPath(); octx.arc(c.x - c.r + px * 2 * c.r, c.y - c.r + py * 2 * c.r, br, 0, Math.PI * 2); octx.fill();
-        }
+    const r = c.r, cx = c.x, cy = c.y;
+    const rOut = Math.max(r, c.ringOut || 0);
+    const x0 = Math.max(0, Math.floor(cx - rOut - 1)), x1 = Math.min(bufW - 1, Math.ceil(cx + rOut + 1));
+    const y0 = Math.max(0, Math.floor(cy - rOut - 1)), y1 = Math.min(bufH - 1, Math.ceil(cy + rOut + 1));
+    if (x1 < x0 || y1 < y0) return;
+    const w = x1 - x0 + 1, h = y1 - y0 + 1;
+    const img = octx.getImageData(x0, y0, w, h);
+    const d = img.data;
+    const cells = c.mode === 1 ? Math.min(MAX_CELLS, c.cells | 0) : 0;
+    const types = cells > 0 ? cellTypes(c.counts, cells) : null;
+    const pts = [];
+    for (let i = 0; i < cells; i++) pts.push(cellPoint(i, c.time));
+    const fill = c.fill || [0, 0, 0, 0], ring = c.ring || [0, 0, 0, 0];
+    const rIn = c.ringIn || 0, rO = c.ringOut || 0;
+    const blend = (o, col, a) => { d[o] = d[o] + (col[0] - d[o]) * a; d[o + 1] = d[o + 1] + (col[1] - d[o + 1]) * a; d[o + 2] = d[o + 2] + (col[2] - d[o + 2]) * a; d[o + 3] = 255; };
+    const white = [255, 255, 255];
+    for (let py = 0; py < h; py++) {
+      const fy = y0 + py + 0.5 - cy;
+      for (let px = 0; px < w; px++) {
+        const fx = x0 + px + 0.5 - cx;
+        const dist = Math.sqrt(fx * fx + fy * fy);
+        const o = (py * w + px) * 4;
+        if (dist <= r) {
+          if (c.mode === 0) { blend(o, [fill[0] * 255, fill[1] * 255, fill[2] * 255], fill[3]); continue; }
+          let best = -1, bd = 1e9;
+          if (cells > 0) {
+            const sx = ((fx + r) / (2 * r)) % 1, sy = ((fy + r) / (2 * r)) % 1;
+            for (let i = 0; i < cells; i++) { const ddx = sx - pts[i][0], ddy = sy - pts[i][1]; const dd = ddx * ddx + ddy * ddy; if (dd < bd) { bd = dd; best = i; } }
+          }
+          if (best >= 0 && types[best] >= 0) blend(o, PALETTE[types[best]], 1); else blend(o, white, 0.05);
+        } else if (dist >= rIn && dist < rO) blend(o, [ring[0] * 255, ring[1] * 255, ring[2] * 255], ring[3]);
       }
     }
-    octx.restore();
-    if (c.ringOut > (c.ringIn || 0)) {
-      octx.strokeStyle = css([c.ring[0] * 255, c.ring[1] * 255, c.ring[2] * 255], c.ring[3]);
-      octx.lineWidth = c.ringOut - c.ringIn;
-      octx.beginPath(); octx.arc(c.x, c.y, (c.ringOut + c.ringIn) / 2, 0, Math.PI * 2); octx.stroke();
-    }
+    octx.putImageData(img, x0, y0);
   };
+  // triangles on the pixel grid (edge functions on pixel centres, no anti-aliasing)
   B.flushShapes = (batch) => {
     const d = batch.data;
     for (let i = 0; i < batch.n; i += 18) {
-      octx.fillStyle = `rgba(${(d[i + 2] * 255) | 0},${(d[i + 3] * 255) | 0},${(d[i + 4] * 255) | 0},${d[i + 5]})`;
-      octx.beginPath(); octx.moveTo(d[i], d[i + 1]); octx.lineTo(d[i + 6], d[i + 7]); octx.lineTo(d[i + 12], d[i + 13]); octx.closePath(); octx.fill();
+      const ax = d[i], ay = d[i + 1], bx = d[i + 6], by = d[i + 7], qx = d[i + 12], qy = d[i + 13];
+      const col = `rgba(${(d[i + 2] * 255) | 0},${(d[i + 3] * 255) | 0},${(d[i + 4] * 255) | 0},${d[i + 5]})`;
+      const x0 = Math.max(0, Math.floor(Math.min(ax, bx, qx))), x1 = Math.min(bufW - 1, Math.ceil(Math.max(ax, bx, qx)));
+      const y0 = Math.max(0, Math.floor(Math.min(ay, by, qy))), y1 = Math.min(bufH - 1, Math.ceil(Math.max(ay, by, qy)));
+      const area = (bx - ax) * (qy - ay) - (by - ay) * (qx - ax);
+      if (Math.abs(area) < 1e-9) continue;
+      const sgn = area > 0 ? 1 : -1;
+      octx.fillStyle = col;
+      for (let y = y0; y <= y1; y++) {
+        const cy = y + 0.5;
+        let start = -1;
+        for (let x = x0; x <= x1 + 1; x++) {
+          const cx = x + 0.5;
+          const inside = x <= x1 && sgn * ((bx - ax) * (cy - ay) - (by - ay) * (cx - ax)) >= 0 && sgn * ((qx - bx) * (cy - by) - (qy - by) * (cx - bx)) >= 0 && sgn * ((ax - qx) * (cy - qy) - (ay - qy) * (cx - qx)) >= 0;
+          if (inside && start < 0) start = x;
+          if (!inside && start >= 0) { octx.fillRect(start, y, x - start, 1); start = -1; }
+        }
+      }
     }
     batch.clear();
   };
@@ -626,7 +660,8 @@ function make2D(canvas) {
   B.end = () => {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(off, 0, 0, bufW * B.pix, bufH * B.pix);
+    const sh = B.shift || [0, 0];
+    ctx.drawImage(off, sh[0], sh[1], bufW * B.pix, bufH * B.pix);
   };
   // tinted letter sprites need a tint pass on 2D: draw into a tiny canvas with multiply
   const tintCache = {};
@@ -675,6 +710,7 @@ export function createRenderer(canvas, assets = {}, options = {}) {
     cam: { x: 0, y: 0, zoom: 1, init: false, lastMs: 0 },
     view: { ox: 0, oy: 0, scale: 1, pix: 1, bufW: 1, bufH: 1 },   // the last draw's transform (project())
     sparks: [],            // { x, y, t0 } world units
+    hits: new Map(),       // body key @ mine -> { t: last hit spark, units: whole units carried then, seen }
     stunSeen: new Map(),   // body key -> stun value at the previous draw
     hudKey: '',
     dpr: 1, cssW: 0, cssH: 0,
@@ -695,9 +731,9 @@ export function createRenderer(canvas, assets = {}, options = {}) {
   {
     const c = document.createElement('canvas'); c.width = 10; c.height = 10;
     const cx = c.getContext('2d');
-    const on = [[3, 0], [4, 0], [5, 0], [6, 0], [1, 1], [2, 1], [7, 1], [8, 1], [0, 2], [9, 2], [0, 3], [9, 3], [0, 4], [9, 4], [0, 5], [9, 5], [0, 6], [9, 6], [0, 7], [9, 7], [1, 8], [2, 8], [7, 8], [8, 8], [3, 9], [4, 9], [5, 9], [6, 9]];
+    const rows = ['..######..', '.########.', '##......##', '##......##', '##......##', '##......##', '##......##', '##......##', '.########.', '..######..'];
     cx.fillStyle = '#fff';
-    for (const [x, y] of on) cx.fillRect(x, y, 1, 1);
+    rows.forEach((row, y) => { for (let x = 0; x < 10; x++) if (row[x] === '#') cx.fillRect(x, y, 1, 1); });
     B.texture('padicon', c, true);
   }
 
@@ -723,7 +759,7 @@ export function createRenderer(canvas, assets = {}, options = {}) {
   // world -> css px of the canvas, with the transform of the last draw
   function project(wx, wy) {
     const v = state.view;
-    return { x: (v.ox + wx * v.scale) * v.pix / state.dpr, y: (v.oy + wy * v.scale) * v.pix / state.dpr };
+    return { x: ((v.ox + wx * v.scale) * v.pix + (v.shx || 0)) / state.dpr, y: ((v.oy + wy * v.scale) * v.pix + (v.shy || 0)) / state.dpr };
   }
 
   function draw(args) {
@@ -741,9 +777,9 @@ export function createRenderer(canvas, assets = {}, options = {}) {
     const arenaMode = camArg.mode === 'arena' || (me < 0 && camArg.x == null);
     // chunky pixels: PIXEL_SCALE css px per buffer px (2 on narrow screens so enough world stays in view)
     const pscale = arenaMode ? opt.arenaPixelScale : (state.cssW < 700 ? Math.min(2, opt.pixelScale) : opt.pixelScale);
-    const pix = Math.max(1, Math.round(pscale * dpr));   // device px per buffer px
+    const pix = Math.max(1, Math.round(pscale * dpr));   // device px per buffer px (whole, so blocks stay even; a fractional dpr changes the world's size a little, as a different window size did in the original)
     B.pix = pix;
-    const bufW = Math.ceil(canvas.width / pix), bufH = Math.ceil(canvas.height / pix);
+    const bufW = Math.ceil(canvas.width / pix) + 1, bufH = Math.ceil(canvas.height / pix) + 1;   // a spare column and row for the sub-block shift
     const R = frame.R != null ? frame.R : 1;
 
     // ---- camera (world units): the original lerps the view centre to the player each frame ----
@@ -768,10 +804,15 @@ export function createRenderer(canvas, assets = {}, options = {}) {
       cam.x += (tx - cam.x) * a; cam.y += (ty - cam.y) * a;
       scale = opt.unitPx * zoom;
     }
-    // buffer px of the world origin (y down); whole buffer pixels so the dots and rings stay on the grid
-    const ox = Math.round(bufW / 2 - cam.x * scale), oy = Math.round(bufH / 2 - cam.y * scale);
+    // buffer px of the world origin (y down): a whole buffer pixel so the dots and rings stay on the grid;
+    // the sub-pixel remainder shifts the blit by whole device px (the original moves its buffer sprite by
+    // fractional window px, so the view scrolls one window pixel at a time, not one block)
+    const oxf = bufW / 2 - cam.x * scale, oyf = bufH / 2 - cam.y * scale;
+    const ox = Math.ceil(oxf), oy = Math.ceil(oyf);
+    const shx = Math.round((oxf - ox) * pix), shy = Math.round((oyf - oy) * pix);   // -(pix-1)..0 device px
+    B.shift = [shx, shy];
     const X = (wx) => ox + wx * scale, Y = (wy) => oy + wy * scale;
-    state.view = { ox, oy, scale, pix, bufW, bufH };
+    state.view = { ox, oy, scale, pix, bufW, bufH, shx, shy };
 
     // ---- pass 1: ground. The dot layers are anchored to the arena's top-left corner (world -1,-1), the
     // original's texture origin; sprite 2 starts half a tile in. ----
@@ -805,27 +846,6 @@ export function createRenderer(canvas, assets = {}, options = {}) {
       }
     }
 
-    // ---- mines: DrawableMine, K = capacity cells, the stock coloured, the rest white at 5%, no outline ----
-    const mineR = (cfg.mine_radius || 0.08) * scale;
-    const K = cfg.bloom_cap > 0 ? cfg.bloom_cap : (cfg.mine_cap || 30);
-    const cells = Math.max(1, Math.round(K));
-    if (meta && meta.mine_pos) {
-      for (let m = 0; m < meta.mine_pos.length; m++) {
-        const [mx, my] = meta.mine_pos[m];
-        const type = meta.mine_type ? meta.mine_type[m] & 3 : m & 3;
-        const alive = frame.alive ? frame.alive[m] : true;
-        const stock = alive ? (frame.mines ? frame.mines[m] : K) : 0;
-        const counts = [0, 0, 0, 0];
-        counts[type] = Math.max(0, Math.min(cells, Math.round(stock)));
-        B.drawCircle({ x: X(mx), y: Y(my), r: mineR, mode: 1, cells, counts, time, ringIn: 0, ringOut: 0 });
-      }
-    }
-
-    // ---- pickups: a spilled unit on the ground, a small disc of its colour ----
-    for (const p of frame.picks || []) {
-      B.drawCircle({ x: X(p[0]), y: Y(p[1]), r: Math.max(2, 0.008 * scale), mode: 0, cells: 0, fill: rgba(PALETTE[p[2] & 3], 1), ringIn: 0, ringOut: 0 });
-    }
-
     // ---- bodies: DrawableGroup, K = units carried (an empty body is the 5% white disc), the joinable
     // outline is the original's 1 px white ring one pixel out, a group being left gets the ungroup blue ----
     const players = frame.players || [];
@@ -843,6 +863,28 @@ export function createRenderer(canvas, assets = {}, options = {}) {
         ring: leaving ? rgba(UNGROUP_COLOR, 1) : [1, 1, 1, 1], ringIn: joinable || leaving ? r + 1 : 0, ringOut: joinable || leaving ? r + 2 : 0,
       });
       bodyOf.push({ b, cx, cy, r, n });
+    }
+
+    // ---- pickups: a spilled unit on the ground, a small disc of its colour ----
+    for (const p of frame.picks || []) {
+      B.drawCircle({ x: X(p[0]), y: Y(p[1]), r: Math.max(2, 0.008 * scale), mode: 0, cells: 0, fill: rgba(PALETTE[p[2] & 3], 1), ringIn: 0, ringOut: 0 });
+    }
+
+    // ---- mines: DrawableMine, K = capacity cells, the stock coloured, the rest white at 5%, no outline; drawn
+    // after the groups like GameObjectRenderer::draw (a body at a mine tucks under its edge) ----
+    const mineR = (cfg.mine_radius || 0.08) * scale;
+    const K = cfg.bloom_cap > 0 ? cfg.bloom_cap : (cfg.mine_cap || 30);
+    const cells = Math.max(1, Math.round(K));
+    if (meta && meta.mine_pos) {
+      for (let m = 0; m < meta.mine_pos.length; m++) {
+        const [mx, my] = meta.mine_pos[m];
+        const type = meta.mine_type ? meta.mine_type[m] & 3 : m & 3;
+        const alive = frame.alive ? frame.alive[m] : true;
+        const stock = alive ? (frame.mines ? frame.mines[m] : K) : 0;
+        const counts = [0, 0, 0, 0];
+        counts[type] = Math.max(0, Math.min(cells, Math.round(stock)));
+        B.drawCircle({ x: X(mx), y: Y(my), r: mineR, mode: 1, cells, counts, time, ringIn: 0, ringOut: 0 });
+      }
     }
 
     // ---- direction arrows (DirectionArrows.cpp: a 6 px triangle 3 px off the edge, intent colour, other
@@ -874,10 +916,40 @@ export function createRenderer(canvas, assets = {}, options = {}) {
     // ---- sparks: the collision animation (spark.png 6 frames at 2x = 64 px, 240 ms), timed in game seconds ----
     const sparks = state.sparks;
     const gt = frame.t || 0;
-    if (state.lastGameT != null && (gt < state.lastGameT - 0.5 || gt > state.lastGameT + 5)) { sparks.length = 0; state.stunSeen.clear(); }
+    if (state.lastGameT != null && (gt < state.lastGameT - 0.5 || gt > state.lastGameT + 5)) { sparks.length = 0; state.stunSeen.clear(); state.hits.clear(); }
     state.lastGameT = gt;
     for (const e of frame.events || []) {
       if (e.kind === 'spill' && e.x != null && !sparks.some(s => s.ev === e.t + ':' + e.x + ':' + e.y)) sparks.push({ x: e.x, y: e.y, t0: e.t != null ? e.t : gt, ev: e.t + ':' + e.x + ':' + e.y });
+    }
+    // mine hits: the original's mines were rigid bodies the group kept bumping into, each bump moving a unit
+    // and playing a spark at the contact point; here a body gathers continuously while it touches a mine, so
+    // a spark is played on the mine's edge at every 0.5 s of gathering and at every whole unit
+    if (meta && meta.mine_pos) {
+      const mr = cfg.mine_radius || 0.08, sr = cfg.solo_radius || 0.045;
+      for (const b of frame.bodies) {
+        if (b.stun > 0) continue;
+        const key = b.m.join(',');
+        const br = sr * Math.sqrt(b.m.length);
+        const carried = b.pool[0] + b.pool[1] + b.pool[2] + b.pool[3];
+        for (let m = 0; m < meta.mine_pos.length; m++) {
+          if (frame.alive && !frame.alive[m]) continue;
+          if (frame.mines && !(frame.mines[m] > 0)) continue;
+          const dx = b.x - meta.mine_pos[m][0], dy = b.y - meta.mine_pos[m][1];
+          const d = Math.hypot(dx, dy);
+          if (d >= br + mr + 0.01) continue;
+          const hk = key + '@' + m;
+          const h = state.hits.get(hk);
+          if (!h) { state.hits.set(hk, { t: gt, units: Math.floor(carried), seen: gt }); continue; }
+          h.seen = gt;
+          const wholeUnit = Math.floor(carried) > h.units;
+          if (gt - h.t >= 0.5 || wholeUnit) {
+            h.t = gt; h.units = Math.floor(carried);
+            const nx = d > 1e-6 ? dx / d : 1, ny = d > 1e-6 ? dy / d : 0;
+            sparks.push({ x: meta.mine_pos[m][0] + nx * mr, y: meta.mine_pos[m][1] + ny * mr, t0: gt });
+          }
+        }
+      }
+      for (const [hk, h] of state.hits) if (gt - h.seen > 0.3) state.hits.delete(hk);
     }
     const seen = new Set();
     for (const b of frame.bodies) {
@@ -933,29 +1005,24 @@ export function createRenderer(canvas, assets = {}, options = {}) {
       hctx.setTransform(1, 0, 0, 1, 0, 0);
       hctx.clearRect(0, 0, W, H);
       hctx.imageSmoothingEnabled = false;
-      const fpx = Math.round(55 * dpr);
-      hctx.font = `${fpx}px monogram, "Courier New", monospace`;
-      hctx.textBaseline = 'alphabetic';
-      hctx.textAlign = 'left';
-      hctx.fillStyle = '#fff';
-      const m = hctx.measureText('0');
-      const capH = m.actualBoundingBoxAscent || fpx * 0.44;
+      // monogram is a 16 px pixel font (crisp at 16, 32, 48 px; anti-aliased at 55): the counts are drawn
+      // from a glyph atlas rendered at 16 px and scaled by whole device px, so every stroke is a clean block
+      const k = Math.max(1, Math.round(3 * dpr));
       const rowPitch = Math.round(40 * dpr), capTop = Math.round(59 * dpr);
       const letterPx = Math.round(25 * dpr), gap = Math.round(16 * dpr);
       const textLeft = W - Math.round(163 * dpr);
+      const atlas = glyphAtlas();
       if (banked && needs) {
         for (let i = 0; i < 4; i++) {
           const top = capTop + rowPitch * i;
-          hctx.fillStyle = '#fff';
-          hctx.fillText(pad2(banked[i]) + '/' + pad2(needs[i]), textLeft, top + capH);
+          drawText(hctx, atlas, pad2(banked[i]) + '/' + pad2(needs[i]), textLeft, top, k, '#ffffff');
           drawLetter(hctx, i, textLeft - gap - letterPx, top, letterPx);
         }
       }
       // the round clock as a fifth row (the original has no clock; the HUD block is the one place the edge
       // indicators never reach)
       const mm = Math.floor(left / 60), ss = left % 60;
-      hctx.fillStyle = left <= 30 ? PALETTE_CSS[3] : 'rgba(255,255,255,0.75)';
-      hctx.fillText(`${mm}:${ss < 10 ? '0' : ''}${ss}`, textLeft, capTop + rowPitch * 4 + capH);
+      drawText(hctx, atlas, `${mm}:${ss < 10 ? '0' : ''}${ss}`, textLeft, capTop + rowPitch * 4, k, left <= 30 ? PALETTE_CSS[3] : 'rgba(255,255,255,0.75)');
     }
     B.hud(hudCanvas, dirty);
 
@@ -964,13 +1031,15 @@ export function createRenderer(canvas, assets = {}, options = {}) {
     if (me >= 0 && frame.players[me]) {
       const intent = (frame.players[me].intent | 0) & 3;
       const pad = 8 * pix, L = Math.round(25 * dpr);
-      const edge = (sx, sy) => ({ x: Math.min(W - pad - L / 2, Math.max(pad + L / 2, sx)), y: Math.min(H - pad - L / 2, Math.max(pad + L / 2, sy)) });
+      // the original clamps the sprite's centre 8 units in from the view edge
+      const edge = (sx, sy) => ({ x: Math.min(W - pad, Math.max(pad, sx)), y: Math.min(H - pad, Math.max(pad, sy)) });
+      const shx = state.view.shx || 0, shy = state.view.shy || 0;
       if (meta && meta.mine_pos) {
         const mineR = (cfg.mine_radius || 0.08) * scale * pix;
         for (let m = 0; m < meta.mine_pos.length; m++) {
           if ((meta.mine_type ? meta.mine_type[m] : m) !== intent) continue;
           if (frame.alive && !frame.alive[m]) continue;
-          const sx = X(meta.mine_pos[m][0]) * pix, sy = Y(meta.mine_pos[m][1]) * pix;   // device px
+          const sx = X(meta.mine_pos[m][0]) * pix + shx, sy = Y(meta.mine_pos[m][1]) * pix + shy;   // device px
           if (sx + mineR > 0 && sx - mineR < W && sy + mineR > 0 && sy - mineR < H) continue;
           const e = edge(sx, sy);
           B.screenSprite('letter' + intent, Math.round(e.x - L / 2), Math.round(e.y - L / 2), L, L, 0, 0, 1, 1, rgba(PALETTE[intent], 1));
@@ -981,7 +1050,7 @@ export function createRenderer(canvas, assets = {}, options = {}) {
         const R = frame.R != null ? frame.R : 1;
         const padRing = Math.max(R - padR - 0.02, 0.1);
         const a = meta.pads[me];
-        const sx = X(padRing * Math.cos(a)) * pix, sy = Y(padRing * Math.sin(a)) * pix;
+        const sx = X(padRing * Math.cos(a)) * pix + shx, sy = Y(padRing * Math.sin(a)) * pix + shy;
         const pr = padR * scale * pix;
         if (!(sx + pr > 0 && sx - pr < W && sy + pr > 0 && sy - pr < H)) {
           const e = edge(sx, sy);
@@ -989,6 +1058,61 @@ export function createRenderer(canvas, assets = {}, options = {}) {
         }
       }
     }
+  }
+
+  // The HUD glyphs ("0123456789/:") rendered once at monogram's native 16 px (alpha thresholded so no
+  // browser anti-aliasing survives), with the ink top of the digits so text can be placed by its cap top.
+  const atlasCache = {};
+  const GLYPHS = '0123456789/: ';
+  function glyphAtlas() {
+    const key = state.fontReady ? 'font' : 'fallback';
+    if (atlasCache[key]) return atlasCache[key];
+    const c = document.createElement('canvas');
+    const cx = c.getContext('2d');
+    const font = state.fontReady ? '16px monogram' : '16px "Courier New", monospace';
+    cx.font = font;
+    const adv = {};
+    let total = 0;
+    for (const ch of GLYPHS) { adv[ch] = Math.max(1, Math.ceil(cx.measureText(ch).width)); total += adv[ch] + 1; }
+    c.width = total; c.height = 20;
+    cx.font = font; cx.textBaseline = 'alphabetic'; cx.textAlign = 'left'; cx.fillStyle = '#fff';
+    const pos = {};
+    let x = 0;
+    for (const ch of GLYPHS) { pos[ch] = x; cx.fillText(ch, x, 15); x += adv[ch] + 1; }
+    const img = cx.getImageData(0, 0, c.width, c.height);
+    const d = img.data;
+    let top = 20, bottom = -1;
+    for (let i = 3; i < d.length; i += 4) {
+      d[i] = d[i] >= 96 ? 255 : 0;
+      if (d[i]) { d[i - 3] = 255; d[i - 2] = 255; d[i - 1] = 255; const y = ((i - 3) / 4 / c.width) | 0; if (y < top) top = y; if (y > bottom) bottom = y; }
+    }
+    cx.putImageData(img, 0, 0);
+    const a = { canvas: c, adv, pos, top: bottom >= 0 ? top : 0, h: bottom >= 0 ? bottom - top + 1 : 7 };
+    atlasCache[key] = a;
+    return a;
+  }
+  const tintCanvas = document.createElement('canvas');
+  function drawText(c, atlas, text, x, capTop, k, color) {
+    // tint: draw the white glyphs into a scratch canvas and multiply by the colour
+    const w = [...text].reduce((acc, ch) => acc + (atlas.adv[ch] || atlas.adv['0']) * k, 0);
+    const h = atlas.canvas.height * k;
+    if (tintCanvas.width < w || tintCanvas.height < h) { tintCanvas.width = Math.max(tintCanvas.width, w); tintCanvas.height = Math.max(tintCanvas.height, h); }
+    const tc = tintCanvas.getContext('2d');
+    tc.setTransform(1, 0, 0, 1, 0, 0);
+    tc.globalCompositeOperation = 'source-over';
+    tc.clearRect(0, 0, tintCanvas.width, tintCanvas.height);
+    tc.imageSmoothingEnabled = false;
+    let px = 0;
+    for (const ch of text) {
+      const g = atlas.pos[ch] != null ? ch : '0';
+      tc.drawImage(atlas.canvas, atlas.pos[g], 0, atlas.adv[g], atlas.canvas.height, px, 0, atlas.adv[g] * k, h);
+      px += atlas.adv[g] * k;
+    }
+    tc.globalCompositeOperation = 'source-in';
+    tc.fillStyle = color; tc.fillRect(0, 0, w, h);
+    tc.globalCompositeOperation = 'source-over';
+    c.imageSmoothingEnabled = false;
+    c.drawImage(tintCanvas, 0, 0, w, h, x, capTop - atlas.top * k, w, h);
   }
 
   const tintedLetters = {};
@@ -1018,6 +1142,7 @@ export function createRenderer(canvas, assets = {}, options = {}) {
     resize, draw, ready, project,
     get mode() { return B.mode; },
     get view() { return state.view; },
+    get sparks() { return state.sparks.length; },   // live spark count (tests)
     stats: state.stats,
     camera: state.cam,
     hudCanvas,
