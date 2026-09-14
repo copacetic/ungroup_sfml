@@ -69,7 +69,7 @@ Toasts on the canvas explain what just happened to you.
   seat, the rest spectate. Empty human seats sit idle until someone joins; a player who leaves mid-round
   is replaced by a bot, and a page refresh reclaims the seat. Rounds restart 8 s after they end.
 * **Join a room**: open the host's link, or paste the code on the home screen.
-* **Watch bots**: a bots-only game with no network at all. `index.html#watch&bots=bail,loyal,rammer&seed=5&preset=life&time=240`
+* **Watch bots**: a bots-only game with no network at all, two trained agents in by default. `index.html#watch&bots=bail,loyal,rammer&agents=2&seed=5&preset=life&time=240`
   starts one directly.
 
 ## Hosting with no server
@@ -135,7 +135,7 @@ the shipped C++ core uses FMA, the JS engine reproduces a `-ffp-contract=off` bu
 
 | file | what |
 |---|---|
-| `index.html`, `src/app.js`, `src/ui.css` | the app: home (create / join / watch), lobby with share link, game screen (canvas, HUD, panel, toasts), end screen with play-again countdown, spectator and host-left overlays, keyboard / pointer / touch input, hash routing (`#r=CODE[&local][&n=NAME]`, `#watch[&bots=..&seed=..&preset=..&time=..]`) |
+| `index.html`, `src/app.js`, `src/ui.css` | the app: home (create / join / watch), lobby with share link, game screen (canvas, HUD, panel, toasts), end screen with play-again countdown, spectator and host-left overlays, keyboard / pointer / touch input, hash routing (`#r=CODE[&local][&n=NAME]`, `#watch[&bots=..&agents=..&seed=..&preset=..&time=..]`) |
 | `src/engine.js` | the rules core, ported function by function from `rl/native/ungroup.cpp`: `CONFIG_DEFAULTS`, `PRESETS`, `preset()`, `Game` (`reset`, `setSeats`, `setInput`, `tick`/`step`, `frame()`/`meta()` in the replay schema, `observe()` in the v3 layout, `stats`, the six scripted bots, macro targets) |
 | `src/rng.js` | `std::mt19937_64` plus the libstdc++ `uniform_real`, `uniform_int`, `discrete_distribution` algorithms, so a seed produces the same needs, pads and mines as the C++ core |
 | `src/render.js` | `createRenderer(canvas, assets)`: the look of the SFML client (the 1x world buffer blitted up with nearest sampling, chase camera, dark disc with the grey out-of-bounds, the two dotted layers, `voronoi_counts` cells for bodies and mines, direction arrows in intent colours, joinable / ungroup rings, sparks on collisions and on every mine hit while a body gathers, the letter HUD in the monogram font from a crisp glyph atlas) plus the pixel-style extras for the new rules (pads, crown notch, brand rim, pickups, clock) in WebGL2 with a 2D-canvas fallback (`#...&2d` forces it) |

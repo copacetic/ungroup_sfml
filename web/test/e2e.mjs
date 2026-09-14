@@ -68,6 +68,7 @@ try {
   await A.goto(base + '#local&n=Alice');
   await A.waitForSelector('#home.active');
   await A.fill('#humans', '3');
+  await A.fill('#agents', '0');   // the field defaults to two trained agents when a model is found
   for (const b of ['solo', 'bail', 'loyal', 'kidnap', 'rammer', 'grudge']) await A.fill(`.bot[data-bot=${b}]`, '0');
   await A.fill('.bot[data-bot=bail]', '2');
   await A.fill('.bot[data-bot=loyal]', '1');
