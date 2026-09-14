@@ -35,6 +35,7 @@ window.__app = S;
 function hashParams() { return new URLSearchParams(location.hash.replace(/^#/, '')); }
 function randomCode(n = 6) { const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s = ''; for (let i = 0; i < n; i++) s += A[Math.floor(Math.random() * A.length)]; return s; }
 function show(name) {
+  if (name !== 'home' && S.screen === 'home') history.pushState({ screen: name }, '', location.href);   // so Back returns home
   S.screen = name;
   for (const id of ['home', 'lobby', 'game']) $(id).classList.toggle('active', id === name);
   if (name === 'game') { ensureRenderer(); requestAnimationFrame(() => S.renderer && S.renderer.resize()); }
@@ -420,8 +421,15 @@ function wireHost(host) {
 }
 function agentLoader(host) {
   return async (url) => {
-    const m = await import('./agent.js');
-    const a = await m.loadAgent(url);
+    let a;
+    try {
+      const m = await import('./agent.js');
+      a = await m.loadAgent(url);
+    } catch (e) {
+      setConn((S.conn ? S.conn + ' · ' : '') + 'agent model unavailable, agent seats play as solo bots', 'warn');
+      toast('the trained agents could not load (onnxruntime from the CDN); their seats play as solo bots', 'hint', 6000);
+      throw e;
+    }
     if (host.game) host.game.decideEvery = a.decideEvery;
     // session.Host calls act() for every agent seat in one tick; an onnxruntime session runs one inference
     // at a time, so the calls are queued (and the observation copied, the engine reuses its buffer).
@@ -467,7 +475,8 @@ async function joinRoom(room, kind) {
 }
 
 function watchBots(settings) {
-  const host = new Host(null, Object.assign({ humans: 0 }, settings));
+  const host = new Host(null, Object.assign({ humans: 0, agentUrl: AGENT_MODEL }, settings));
+  host._loadAgent = agentLoader(host);
   S.mode = 'watch'; S.kind = null; S.room = null; S.host = host;
   setConn('bots only, no network', 'ok');
   wireHost(host);
@@ -562,6 +571,7 @@ async function main() {
   bindInput();
   addEventListener('resize', () => S.renderer && S.renderer.resize());
   addEventListener('hashchange', () => location.reload());   // a new #r= / #watch link in the same tab starts over
+  addEventListener('popstate', () => { if (S.screen !== 'home') quit(); });   // Back from the lobby or the game
   addEventListener('beforeunload', () => { try { if (S.host) S.host.close(); else if (S.client) S.client.close(); } catch (_) { /* ignore */ } });
   requestAnimationFrame(loop);
 
@@ -569,6 +579,7 @@ async function main() {
   fetch(AGENT_MODEL.replace(/\.onnx$/, '.json'), { method: 'HEAD' }).then((r) => {
     S.agentOk = r.ok;
     $('agents').disabled = !r.ok;
+    if (r.ok && !(+$('agents').value)) $('agents').value = 2;
     $('agentNote').textContent = r.ok ? 'model: ' + AGENT_MODEL + ' (onnxruntime from the CDN)' : 'no model found';
   }).catch(() => { $('agentNote').textContent = 'no model (agents need an http(s) host)'; });
 
@@ -580,8 +591,8 @@ async function main() {
   });
   $('watch').addEventListener('click', () => {
     const st = readSettings();
-    if (!st.bots.length) st.bots = ['bail', 'bail', 'loyal', 'loyal', 'solo', 'rammer'];
-    watchBots({ bots: st.bots, agents: 0, preset: st.preset, overrides: st.overrides, seed: st.seed, rounds: st.rounds });
+    if (!st.bots.length && !st.agents) { st.bots = ['bail', 'loyal', 'loyal', 'solo']; st.agents = S.agentOk ? 2 : 0; }
+    watchBots({ bots: st.bots, agents: st.agents, preset: st.preset, overrides: st.overrides, seed: st.seed, rounds: st.rounds });
   });
   $('join').addEventListener('click', async () => {
     readName();
@@ -599,8 +610,9 @@ async function main() {
   $('leaveLobby').addEventListener('click', quit);
 
   if (h.has('watch')) {
-    const bots = (h.get('bots') || 'bail,bail,loyal,loyal,solo,rammer').split(',').filter((b) => BOT_TYPES.includes(b));
-    watchBots({ bots: bots.length ? bots : ['solo'], agents: 0, preset: $('preset').value, overrides: { time_limit: +(h.get('time') || 240) }, seed: +(h.get('seed') || 0), rounds: 0 });
+    const bots = (h.get('bots') || 'bail,loyal,loyal,solo').split(',').filter((b) => BOT_TYPES.includes(b));
+    const agents = Math.max(0, Math.min(8, h.has('agents') ? (h.get('agents') | 0) : 2));   // trained agents fall back to solo bots when the model cannot load
+    watchBots({ bots: bots.length || agents ? bots : ['solo'], agents, preset: $('preset').value, overrides: { time_limit: +(h.get('time') || 240) }, seed: +(h.get('seed') || 0), rounds: 0 });
   } else if (h.get('r')) {
     $('joinCode').value = h.get('r').toUpperCase();
     try { await joinRoom(h.get('r').toUpperCase(), h.has('local') ? 'local' : defaultKind()); }
