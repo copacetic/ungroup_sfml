@@ -12,7 +12,7 @@
 import { createRenderer, PALETTE_CSS } from './render.js';
 const FORCE_2D = /(^|[#&])2d(&|$)/.test(location.hash);   // #...&2d at load forces the canvas fallback renderer
 import { PRESETS } from './engine.js';
-import { createTransport } from './net.js';
+import { createTransport, makeInvite, acceptInvite } from './net.js';
 import { Host, Client, LocalView, RESTART_DELAY_MS } from './session.js';
 
 const $ = (id) => document.getElementById(id);
@@ -366,19 +366,20 @@ function loop(now) {
 async function makeTransport(kind, room) {
   let t = null;
   if (kind === 'rtc') {
-    setConn('connecting (rtc)...', 'warn');
-    // a DualTransport: WebRTC for other devices plus this browser's other tabs under one peer id; when the
-    // signalling module cannot load it is the tab channel alone
+    setConn('connecting (p2p)...', 'warn');
+    // a MultiTransport: this browser's other tabs at once, every signalling strategy as it loads, and
+    // hand-made direct channels (invite links), all under one peer id
     t = await createTransport({ kind: 'rtc', room });
-    if (t.rtc) S.kind = 'rtc';
-    else { console.warn('rtc transport failed', t.rtcError); S.rtcFallback = 'rtc unavailable, '; S.kind = 'local'; }
+    S.kind = 'rtc';
   }
   if (!t) { t = await createTransport({ kind: 'local', room }); S.kind = 'local'; }
   const status = () => {
     const n = t.peers().length;
-    const via = S.kind === 'rtc' ? 'rtc via ' + (t.rtc ? t.rtc.strategy : 'p2p') + ' + this browser' : (S.rtcFallback || '') + 'local (this browser)';
+    const st = typeof t.status === 'function' ? t.status() : null;
+    const via = S.kind === 'rtc' ? 'p2p via ' + (st && st.strategy ? st.strategy : 'this browser only') : (S.rtcFallback || '') + 'local (this browser)';
     setConn(`${via} · ${n} peer${n === 1 ? '' : 's'}`, S.kind === 'rtc' && n === 0 ? 'warn' : 'ok');
   };
+  if (t.ready) t.ready.then(() => { if (t.rtcError) { console.warn('signalling unavailable', t.rtcError); S.rtcFallback = 'signalling unavailable, '; } status(); updateSig(); });
   t.onPeer(status); t.onLeave(status); status();
   return t;
 }
@@ -396,16 +397,64 @@ function sigText() {
   const st = typeof t.status === 'function' ? t.status() : { peers: t.peers().length };
   const parts = [];
   if (S.kind === 'rtc') {
-    parts.push(`signalling: ${st.strategy || 'p2p'}`);
-    if (st.relays != null) parts.push(`trackers ${st.relaysOpen}/${st.relays}`);
-  } else parts.push(S.rtcFallback ? 'signalling unavailable (' + (st.rtcError || 'no module') + '): this browser\'s tabs only' : 'this browser only');
+    const paths = (st.paths || []).filter((p) => p.kind === 'rtc').map((p) => `${p.strategy || p.name}${p.relays != null ? ' ' + p.relaysOpen + '/' + p.relays : ''}`);
+    parts.push('relays: ' + (paths.length ? paths.join(', ') : (st.rtcError ? 'unavailable' : 'loading...')));
+    if (st.direct) parts.push(`${st.direct} direct link${st.direct === 1 ? '' : 's'}`);
+  } else parts.push('this browser only');
   parts.push(`${st.peers} peer${st.peers === 1 ? '' : 's'}`);
   let hint = '';
-  if (S.kind === 'rtc' && st.relays != null && st.relaysOpen === 0 && (performance.now() - (S.transportAt || 0)) > 10000) hint = ' · no tracker answers yet: other devices cannot find this room until one does (a firewall or an ad blocker may block wss:// trackers); other tabs of this browser still can';
+  const waited = performance.now() - (S.transportAt || 0);
+  if (S.kind === 'rtc' && waited > 10000 && (st.rtcError || (st.relays != null && st.relaysOpen === 0))) hint = S.mode === 'host' ? ' · no relay answers: friends elsewhere cannot find this room by its link; make them an invite link below instead (it needs no relay)' : ' · no relay answers: ask the host for an invite link (it needs no relay)';
   return parts.join(' · ') + hint;
 }
 function updateSig() { const el = $('sig'); if (!el) return; el.textContent = S.screen === 'lobby' ? sigText() : ''; }
 setInterval(updateSig, 2000);
+
+// ---- invites without relays: the host's offer travels in a link, the friend's answer comes back as a code
+async function newInvite() {
+  const t = S.transport;
+  if (!t || typeof t.add !== 'function') return;
+  if (S.invite && !S.invite.connected) { try { S.invite.transport.close(); } catch (_) { /* ignore */ } }
+  $('inviteState').textContent = 'preparing (a few seconds)...';
+  $('mkInvite').disabled = true;
+  try {
+    const inv = await makeInvite();
+    inv.connected = false;
+    inv.transport.onPeer(() => { inv.connected = true; $('inviteState').textContent = 'connected'; toast('a friend joined over your invite link', 'merge', 3000); });
+    t.add(inv.transport.id, 'direct', inv.transport);
+    S.invite = inv;
+    const base = location.href.split('#')[0];
+    $('inviteLink').value = base + '#r=' + S.room + '&o=' + inv.offer;
+    $('inviteLink').classList.remove('hidden'); $('copyInvite').classList.remove('hidden');
+    $('inviteState').textContent = 'send the link, then paste the reply code you get back';
+  } catch (e) { console.error(e); $('inviteState').textContent = 'could not make an invite: ' + e.message; }
+  $('mkInvite').disabled = false;
+}
+async function useReply() {
+  const text = $('replyIn').value.trim();
+  if (!S.invite) { $('inviteState').textContent = 'make an invite link first'; return; }
+  if (!text) return;
+  try { await S.invite.complete(text); $('inviteState').textContent = 'connecting...'; $('replyIn').value = ''; }
+  catch (e) { console.error(e); $('inviteState').textContent = 'that reply did not work: ' + e.message; }
+}
+async function answerInvite(offer) {
+  const t = S.transport;
+  if (!t || typeof t.add !== 'function') return;
+  try {
+    const acc = await acceptInvite(offer);
+    $('replyOut').value = acc.answer;
+    $('replyBox').classList.remove('hidden');
+    acc.attach(t).then((d) => d.onPeer(() => { $('replyBox').classList.add('hidden'); toast('connected to the host directly', 'merge', 3000); })).catch((e) => console.warn(e));
+  } catch (e) { console.error(e); $('notice').textContent = 'the invite in this link did not work: ' + e.message; }
+}
+function copyText(id, doneId) {
+  const el = $(id);
+  return async () => {
+    try { await navigator.clipboard.writeText(el.value); $(doneId).textContent = 'copied'; }
+    catch (_) { el.select(); try { document.execCommand('copy'); $(doneId).textContent = 'copied'; } catch (e) { $(doneId).textContent = 'select and copy it'; } }
+    setTimeout(() => { $(doneId).textContent = ''; }, 2000);
+  };
+}
 
 // ---------------------------------------------------------------------------------------------- lobby
 function renderLobby(l) {
@@ -416,6 +465,7 @@ function renderLobby(l) {
     ? (S.kind === 'local' ? 'This room is local to this browser: open the link in another tab of this browser to add a player. Peer-to-peer rooms (network: rtc) work across machines.'
       : 'Send this link to the people you want to play with. Anyone who opens it takes a free human seat; the rest spectate.')
     : 'Wait for the host to start. Take a free human seat by being here first.';
+  $('invite').classList.toggle('hidden', !(S.mode === 'host' && S.kind === 'rtc'));
   const seats = $('seats');
   if (!l) {
     $('lobbySettings').textContent = '';
@@ -640,6 +690,10 @@ async function main() {
     if (!code) return;
     try { await joinRoom(code, $('joinLocal').checked ? 'local' : defaultKind()); } catch (e) { console.error(e); alert('could not join: ' + e.message); }
   });
+  $('mkInvite').addEventListener('click', newInvite);
+  $('useReply').addEventListener('click', useReply);
+  $('copyInvite').addEventListener('click', copyText('inviteLink', 'inviteCopied'));
+  $('copyReply').addEventListener('click', copyText('replyOut', 'replyCopied'));
   $('copy').addEventListener('click', async () => {
     const link = $('link').value;
     try { await navigator.clipboard.writeText(link); $('copied').textContent = 'copied'; }
@@ -655,8 +709,10 @@ async function main() {
     watchBots({ bots: bots.length || agents ? bots : ['solo'], agents, preset: $('preset').value, overrides: { time_limit: +(h.get('time') || 240) }, seed: +(h.get('seed') || 0), rounds: 0 });
   } else if (h.get('r')) {
     $('joinCode').value = h.get('r').toUpperCase();
-    try { await joinRoom(h.get('r').toUpperCase(), h.has('local') ? 'local' : defaultKind()); }
-    catch (e) { console.error(e); setConn('join failed: ' + e.message, 'err'); }
+    try {
+      await joinRoom(h.get('r').toUpperCase(), h.has('local') ? 'local' : defaultKind());
+      if (h.get('o')) { history.replaceState(null, '', location.href.split('#')[0] + '#r=' + h.get('r').toUpperCase()); await answerInvite(h.get('o')); }   // an invite link: answer it
+    } catch (e) { console.error(e); setConn('join failed: ' + e.message, 'err'); }
   }
 }
 

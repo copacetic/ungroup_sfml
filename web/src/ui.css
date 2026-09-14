@@ -61,7 +61,8 @@ h3 { font-size: 22px; margin: 12px 0 4px; font-weight: normal; color: var(--dim)
 /* ---- lobby ---- */
 #lobby { height: 100%; overflow: auto; padding: 24px 16px 60px; }
 #lobby .inner { max-width: 900px; margin: 0 auto; }
-#link { width: min(100%, 560px); font-size: 16px; }
+#link, #inviteLink { width: min(100%, 560px); font-size: 16px; }
+#replyIn, #replyOut { width: min(100%, 560px); font-family: inherit; font-size: 14px; color: var(--text); background: var(--panel2); border: 2px solid var(--line); padding: 4px 6px; word-break: break-all; }
 #seats { list-style: none; padding: 0; margin: 8px 0; }
 #seats li { display: flex; gap: 12px; align-items: center; padding: 6px 10px; border: 2px solid var(--line); margin-bottom: 4px; background: var(--panel2); }
 #seats li.me { border-color: var(--A); }

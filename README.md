@@ -25,7 +25,8 @@ Created by [@sourenp](https://github.com/SourenP) and [@copacetic](https://githu
 A browser port lives in [`web/`](web/README.md): the same rules as the C++ core used for the
 reinforcement-learning agents (`rl/native/ungroup.cpp`, ported to JavaScript and checked against it),
 the look of the SFML client in WebGL2, and serverless multiplayer over WebRTC (signalling through
-Trystero's public strategies, so a room is just a link and no server of ours exists). Trained agents
+public nostr / MQTT / BitTorrent relays, or a hand-carried invite link when none answers, so a room is
+just a link and no server of ours exists). Trained agents
 can fill seats through onnxruntime-web, and a bots-only *watch* mode needs no network at all.
 `python3 -m http.server 8080 --directory web` serves it locally; `.github/workflows/pages.yml`
 publishes it to GitHub Pages. Controls, presets, hosting, tests and known gaps are in

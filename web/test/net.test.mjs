@@ -3,7 +3,7 @@
 // API and the older [send, receive] tuple API). Run: node web/test/net.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { LocalTransport, RtcTransport, DualTransport, TRYSTERO_IMPORT, TRYSTERO_STRATEGIES, DEFAULT_RTC_CONFIG, createTransport } from '../src/net.js';
+import { LocalTransport, RtcTransport, MultiTransport, DirectTransport, TRYSTERO_IMPORT, TRYSTERO_STRATEGIES, DEFAULT_RTC_CONFIG, createTransport, encodeSignal, decodeSignal } from '../src/net.js';
 
 const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 
@@ -115,59 +115,104 @@ for (const legacy of [false, true]) {
 test('createTransport validates its arguments and pins Trystero', async () => {
   await assert.rejects(() => createTransport({ kind: 'rtc' }), /room is required/);
   await assert.rejects(() => createTransport({ kind: 'bogus', room: 'x' }), /unknown transport kind/);
-  assert.match(TRYSTERO_IMPORT, /^https:\/\/cdn\.jsdelivr\.net\/npm\/@trystero-p2p\/torrent@0\.25\.4\/\+esm$/);
-  assert.deepEqual(TRYSTERO_STRATEGIES.map((s) => s.name), ['torrent', 'nostr', 'mqtt']);
+  assert.match(TRYSTERO_IMPORT, /^https:\/\/cdn\.jsdelivr\.net\/npm\/@trystero-p2p\/nostr@0\.25\.4\/\+esm$/);
+  assert.deepEqual(TRYSTERO_STRATEGIES.map((s) => s.name), ['nostr', 'mqtt', 'torrent']);
+  for (const st of TRYSTERO_STRATEGIES) assert.ok(st.relayUrls.every((u) => u.startsWith('wss://')), st.name + ' relays are wss');
   // a strategy list whose modules cannot load: strict mode rejects with a clear error (no network in
   // tests); the default falls back to the tab channel alone and records the error
   const bad = [{ name: 'none', url: 'data:text/javascript,export const nothing = 1' }];
   await assert.rejects(() => createTransport({ kind: 'rtc', room: 'x', strategies: bad, strict: true }), /could not load Trystero/);
   await assert.rejects(() => createTransport({ kind: 'rtc-only', room: 'x', strategies: bad }), /could not load Trystero/);
-  const dual = await createTransport({ kind: 'rtc', room: 'nettest-fallback', strategies: bad });
-  assert.equal(dual.kind, 'dual'); assert.equal(dual.rtc, null); assert.match(dual.rtcError.message, /could not load Trystero/);
-  assert.equal(dual.status().localPeers, 0);
-  dual.close();
+  const multi = await createTransport({ kind: 'rtc', room: 'nettest-fallback', strategies: bad });
+  assert.equal(multi.kind, 'multi'); assert.equal(multi.rtc, null);
+  await multi.ready;
+  assert.match(multi.rtcError.message, /could not load Trystero/);
+  assert.equal(multi.status().localPeers, 0); assert.equal(multi.status().errors.none.length > 0, true);
+  multi.close();
   assert.ok(DEFAULT_RTC_CONFIG.iceServers.some((s) => String(s.urls).includes('turn:')), 'a TURN server is configured');
   const local = await createTransport({ kind: 'local', room: 'nettest-create' });
   assert.equal(typeof local.id, 'string');
   local.close();
 });
 
-test('DualTransport: tabs of one browser meet on the local channel, others over rtc, nothing twice', async () => {
-  const room = 'nettest-dual-' + Math.random().toString(36).slice(2, 8);
-  const rooms = fakeRooms(false);
-  // p1 and p2 share a BroadcastChannel room (same browser) AND the mocked rtc room: every message must
-  // arrive exactly once, over the local route
-  const a = new DualTransport(new LocalTransport(room, { id: 'p1' }), new RtcTransport(rooms.p1, 'p1', 'fake', { getRelaySockets: () => ({ 'wss://x': { readyState: 1 }, 'wss://y': { readyState: 0 } }) }));
-  const b = new DualTransport(new LocalTransport(room, { id: 'p2' }), new RtcTransport(rooms.p2, 'p2', 'fake'));
-  await tick();
-  assert.deepEqual(a.peers(), ['p2']); assert.deepEqual(b.peers(), ['p1']);
-  assert.equal(a._route.get('p2'), 'local');
+// A fake RTCDataChannel pair (open at once, messages delivered on a timer).
+function fakeChannelPair() {
+  const mk = () => ({ readyState: 'open', onopen: null, onmessage: null, onclose: null, onerror: null, other: null,
+    send(d) { const o = this.other; setTimeout(() => { if (o.onmessage && o.readyState === 'open') o.onmessage({ data: d }); }, 0); },
+    close() { this.readyState = 'closed'; if (this.onclose) this.onclose(); const o = this.other; if (o.readyState === 'open') { o.readyState = 'closed'; if (o.onclose) o.onclose(); } } });
+  const x = mk(), y = mk(); x.other = y; y.other = x; return [x, y];
+}
+
+test('MultiTransport: one peer over the tab channel and two mocked signalling paths, nothing twice, best path wins', async () => {
+  const room = 'nettest-multi-' + Math.random().toString(36).slice(2, 8);
+  const r1 = fakeRooms(false), r2 = fakeRooms(false);
+  const a = new MultiTransport('A', new LocalTransport(room, { id: 'A' }));
+  const b = new MultiTransport('B', new LocalTransport(room, { id: 'B' }));
+  a.add('rtc:x', 'rtc', new RtcTransport(r1.p1, 'p1', 'x', { getRelaySockets: () => ({ 'wss://x': { readyState: 1 } }) }));
+  b.add('rtc:x', 'rtc', new RtcTransport(r1.p2, 'p2', 'x'));
+  a.add('rtc:y', 'rtc', new RtcTransport(r2.p1, 'q1', 'y', { getRelaySockets: () => ({ 'wss://y': { readyState: 0 } }) }));
+  b.add('rtc:y', 'rtc', new RtcTransport(r2.p2, 'q2', 'y'));
+  await tick(60);
+  assert.deepEqual(a.peers(), ['B']); assert.deepEqual(b.peers(), ['A']);
+  assert.equal(a.routeOf('B'), 'local'); assert.equal(a._routes.get('B').length, 3, 'three paths to the same peer');
   const got = [];
   b.on('hello', (obj, from) => got.push(from + ':' + obj.n));
-  a.send('hello', { n: 'bcast' });
-  a.send('hello', { n: 'uni' }, 'p2');
+  a.send('hello', { n: 'bcast' }); a.send('hello', { n: 'uni' }, 'B');
   await tick(40);
-  assert.deepEqual(got.sort(), ['p1:bcast', 'p1:uni']);
+  assert.deepEqual(got.sort(), ['A:bcast', 'A:uni']);
   const st = a.status();
-  assert.equal(st.strategy, 'fake'); assert.equal(st.relays, 2); assert.equal(st.relaysOpen, 1); assert.equal(st.peers, 1); assert.equal(st.localPeers, 1);
-  // a peer only on rtc (another device): c shares the mocked rtc room with nobody here, so wire a third
-  // fake pair and check the rtc route is used
-  const rooms2 = fakeRooms(false);
-  const c = new DualTransport(new LocalTransport('other-browser-' + room, { id: 'p1' }), new RtcTransport(rooms2.p1, 'p1', 'fake'));
-  const d = new DualTransport(new LocalTransport('another-browser-' + room, { id: 'p2' }), new RtcTransport(rooms2.p2, 'p2', 'fake'));
-  await tick();
-  assert.equal(c._route.get('p2'), 'rtc'); assert.equal(d._route.get('p1'), 'rtc');
+  assert.equal(st.strategy, 'x+y'); assert.equal(st.relays, 2); assert.equal(st.relaysOpen, 1); assert.equal(st.peers, 1); assert.equal(st.localPeers, 1);
+  // another device: no tab channel in common, two signalling paths; messages arrive once over the first
+  const r3 = fakeRooms(false), r4 = fakeRooms(false);
+  const c = new MultiTransport('C', new LocalTransport('br1-' + room, { id: 'C' }));
+  const d = new MultiTransport('D', new LocalTransport('br2-' + room, { id: 'D' }));
+  c.add('rtc:x', 'rtc', new RtcTransport(r3.p1, 'p1', 'x')); d.add('rtc:x', 'rtc', new RtcTransport(r3.p2, 'p2', 'x'));
+  c.add('rtc:y', 'rtc', new RtcTransport(r4.p1, 'q1', 'y')); d.add('rtc:y', 'rtc', new RtcTransport(r4.p2, 'q2', 'y'));
+  await tick(60);
+  assert.deepEqual(c.peers(), ['D']); assert.equal(c.routeOf('D'), 'rtc:x');
   const got2 = [];
   d.on('hello', (obj, from) => got2.push(from + ':' + obj.n));
-  c.send('hello', { n: 'bcast' }); c.send('hello', { n: 'uni' }, 'p2');
+  c.send('hello', { n: 'bcast' }); c.send('hello', { n: 'uni' }, 'D');
   await tick(40);
-  assert.deepEqual(got2.sort(), ['p1:bcast', 'p1:uni']);
-  // the local tab closing while rtc still knows the peer keeps the peer, now over rtc
+  assert.deepEqual(got2.sort(), ['C:bcast', 'C:uni']);
+  // the local tab closing keeps the peer over the signalling path; losing every path drops it
   const left = [];
   a.onLeave((id) => left.push(id));
   b.local.close();
   await tick(40);
-  assert.deepEqual(left, []); assert.equal(a._route.get('p2'), 'rtc');
+  assert.deepEqual(left, []); assert.equal(a.routeOf('B'), 'rtc:x');
+  r1.p2.leave(); r2.p2.leave();
+  await tick(40);
+  assert.deepEqual(left, ['B']); assert.deepEqual(a.peers(), []);
   for (const t of [a, b, c, d]) t.close();
   await tick();
+});
+
+test('DirectTransport: a hand-made data channel is one more path; signal codes round-trip', async () => {
+  const [x, y] = fakeChannelPair();
+  const a = new MultiTransport('A', new LocalTransport('nettest-direct-a', { id: 'A' }));
+  const b = new MultiTransport('B', new LocalTransport('nettest-direct-b', { id: 'B' }));
+  a.add('direct-1', 'direct', new DirectTransport(x, { id: 'direct-1' }));
+  b.add('direct-1', 'direct', new DirectTransport(y, { id: 'direct-1' }));
+  await tick(40);
+  assert.deepEqual(a.peers(), ['B']); assert.deepEqual(b.peers(), ['A']); assert.equal(a.routeOf('B'), 'direct-1');
+  const got = [];
+  b.on('snap', (obj, from) => got.push(from + ':' + obj.tick));
+  a.send('snap', { tick: 7 }); a.send('snap', { tick: 8 }, 'B');
+  await tick(30);
+  assert.deepEqual(got, ['A:7', 'A:8']);
+  assert.equal(a.status().direct, 1);
+  const left = [];
+  a.onLeave((id) => left.push(id));
+  y.close();
+  await tick(30);
+  assert.deepEqual(left, ['B']);
+  a.close(); b.close();
+  // the offer/answer text: compressed when the runtime has CompressionStream, plain otherwise
+  const sdp = 'v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\n' + 'a=candidate:1 1 udp 2 192.168.0.1 5000 typ host\r\n'.repeat(6);
+  const code = await encodeSignal({ v: 1, sdp });
+  assert.ok(/^[zr][A-Za-z0-9_-]+$/.test(code), 'url-safe: ' + code.slice(0, 20));
+  if (typeof CompressionStream !== 'undefined') assert.ok(code.length < sdp.length, 'compressed ' + code.length + ' < ' + sdp.length);
+  assert.deepEqual(await decodeSignal(code), { v: 1, sdp });
+  assert.deepEqual(await decodeSignal(' ' + code + '\n'), { v: 1, sdp });
 });

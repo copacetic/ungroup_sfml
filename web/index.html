@@ -43,7 +43,7 @@
           <label>rounds <input id="rounds" type="number" min="0" max="99" value="0" title="0 = endless"> <span class="small dim">(0 = endless)</span></label>
         </div>
         <div class="row">
-          <label>network <select id="kind"><option value="rtc">peer to peer (rtc)</option><option value="local">this browser only (local)</option></select></label>
+          <label>network <select id="kind"><option value="rtc">peer to peer (relays or invite links)</option><option value="local">this browser only (local)</option></select></label>
           <span id="kindNote" class="small dim"></span>
         </div>
         <div class="actions">
@@ -86,6 +86,18 @@
       <span id="copied" class="small dim"></span>
     </div>
     <div id="linkHelp" class="help" style="margin-top:0"></div>
+    <div id="invite" class="hidden">
+      <h3>invite without relays</h3>
+      <div class="help" style="margin-top:0">If a friend cannot find the room by the link above, make them an invite link: it carries your connection offer, their browser shows a reply code, they send that back to you (any chat), and you paste it here. One invite per friend.</div>
+      <div class="row"><button id="mkInvite">Make an invite link</button><span id="inviteState" class="small dim"></span></div>
+      <div class="row"><input id="inviteLink" type="text" readonly class="hidden"><button id="copyInvite" class="hidden">Copy invite</button><span id="inviteCopied" class="small dim"></span></div>
+      <div class="row"><textarea id="replyIn" rows="2" placeholder="paste the reply code here"></textarea><button id="useReply">Connect</button></div>
+    </div>
+    <div id="replyBox" class="hidden">
+      <h3>your reply code</h3>
+      <div class="help" style="margin-top:0">The host opened a direct connection to you. Send this code back to the host (any chat); you are in once they paste it.</div>
+      <div class="row"><textarea id="replyOut" rows="3" readonly></textarea><button id="copyReply">Copy reply code</button><span id="replyCopied" class="small dim"></span></div>
+    </div>
     <div id="lobbySettings" class="dim small"></div>
     <h3>seats</h3>
     <ul id="seats"></ul>

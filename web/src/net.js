@@ -32,12 +32,16 @@
 // 'local' kinds; tests use an in-process FakeTransport with the same interface (web/test/session.test.mjs).
 
 const TRYSTERO_VERSION = '0.25.4';
-// Strategy order: torrent trackers first, then nostr, then mqtt. Each entry is a full pinned URL so the
-// import specifier is static text (CSP-friendly, no string building at runtime).
+// Signalling strategies, all joined at once (see MultiTransport): nostr relays, MQTT brokers and BitTorrent
+// trackers, each with its own list of public relays (Trystero's `relayUrls`; the built-in tracker list has
+// several dead entries). Each entry is a full pinned URL so the import specifier is static text.
 export const TRYSTERO_STRATEGIES = Object.freeze([
-  { name: 'torrent', url: `https://cdn.jsdelivr.net/npm/@trystero-p2p/torrent@${TRYSTERO_VERSION}/+esm` },
-  { name: 'nostr', url: `https://cdn.jsdelivr.net/npm/@trystero-p2p/nostr@${TRYSTERO_VERSION}/+esm` },
-  { name: 'mqtt', url: `https://cdn.jsdelivr.net/npm/@trystero-p2p/mqtt@${TRYSTERO_VERSION}/+esm` },
+  { name: 'nostr', url: `https://cdn.jsdelivr.net/npm/@trystero-p2p/nostr@${TRYSTERO_VERSION}/+esm`,
+    relayUrls: ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.nostr.band', 'wss://relay.snort.social', 'wss://relay.primal.net', 'wss://nostr.mom', 'wss://relay.nostr.bg'], relayRedundancy: 4 },
+  { name: 'mqtt', url: `https://cdn.jsdelivr.net/npm/@trystero-p2p/mqtt@${TRYSTERO_VERSION}/+esm`,
+    relayUrls: ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt', 'wss://test.mosquitto.org:8081'], relayRedundancy: 2 },
+  { name: 'torrent', url: `https://cdn.jsdelivr.net/npm/@trystero-p2p/torrent@${TRYSTERO_VERSION}/+esm`,
+    relayUrls: ['wss://tracker.openwebtorrent.com', 'wss://tracker.webtorrent.dev', 'wss://tracker.files.fm:7073/announce', 'wss://tracker.btorrent.xyz'], relayRedundancy: 3 },
 ]);
 export const TRYSTERO_IMPORT = TRYSTERO_STRATEGIES[0].url;
 export const DEFAULT_APP_ID = 'ungroup-web-v1';
@@ -224,76 +228,193 @@ export class RtcTransport extends TransportBase {
   }
 }
 
-// ----------------------------------------------------------------------------------------------- dual
-// WebRTC for other devices plus the BroadcastChannel for the other tabs of this browser, under one peer
-// id. Tabs of the same browser find each other at once even when no signalling tracker answers; other
-// devices arrive through Trystero. A peer reachable on the local channel is spoken to there only, so
-// nothing is delivered twice.
-export class DualTransport extends TransportBase {
-  constructor(local, rtc = null) {
-    super(local.id);
-    this.local = local;
-    this.rtc = null;
-    this.kind = 'dual';
+// ---------------------------------------------------------------------------------------------- multi
+// One peer id over many paths. Sub-transports (the BroadcastChannel for this browser's tabs, one Trystero
+// room per signalling strategy, hand-made direct data channels) each know a peer by their own id; the
+// MultiTransport exchanges its canonical id over every path ('ugid' handshake) and announces a peer once,
+// under that id, routing messages to it over its best path (local, then direct, then whichever
+// signalling path came up first). So a friend found through nostr and through the trackers is one peer,
+// and a tab of the same browser is found even when no relay answers at all.
+const ROUTE_PRIORITY = { local: 0, direct: 1, rtc: 2 };
+const UGID = 'ugid';
+export class MultiTransport extends TransportBase {
+  constructor(id, local = null) {
+    super(id);
+    this.kind = 'multi';
+    this.subs = [];                 // { name, kind, t }
+    this._routes = new Map();       // canonical peer id -> [{ sub, subPeer }] best first
+    this._canon = new Map();        // sub.name + ':' + subPeer -> canonical id
+    this._errors = {};              // strategy name -> error message
     this.rtcError = null;
-    this._route = new Map();   // peer id -> 'local' | 'rtc'
-    this._subs = new Set();    // 'local:channel' / 'rtc:channel' already forwarded
-    this._wire(local, 'local');
-    if (rtc) this.attachRtc(rtc);
+    if (local) this.add('local', 'local', local);
   }
-  attachRtc(rtc) {
-    if (this.closed) { try { rtc.close(); } catch (e) { /* ignore */ } return; }
-    this.rtc = rtc;
-    this._wire(rtc, 'rtc');
-    for (const ch of this._handlers.keys()) this._forward(rtc, 'rtc', ch);
-  }
-  _wire(t, kind) {
-    t.onPeer((id) => {
-      const cur = this._route.get(id);
-      if (kind === 'local' || !cur) this._route.set(id, kind);
-      this._addPeer(id);
+  add(name, kind, t) {
+    if (this.closed) { try { t.close(); } catch (e) { /* ignore */ } return; }
+    const sub = { name, kind, t };
+    this.subs.push(sub);
+    t.on(UGID, (obj, subPeer) => {
+      if (!obj || typeof obj.id !== 'string' || obj.id === this.id) return;
+      const key = name + ':' + subPeer;
+      if (this._canon.get(key) === obj.id) return;
+      this._canon.set(key, obj.id);
+      const routes = this._routes.get(obj.id) || [];
+      if (!routes.some((r) => r.sub === sub && r.subPeer === subPeer)) {
+        routes.push({ sub, subPeer });
+        routes.sort((x, y) => ROUTE_PRIORITY[x.sub.kind] - ROUTE_PRIORITY[y.sub.kind] || this.subs.indexOf(x.sub) - this.subs.indexOf(y.sub));
+      }
+      this._routes.set(obj.id, routes);
+      if (!obj.ack) t.send(UGID, { id: this.id, ack: 1 }, subPeer);   // answer so the other side maps us too
+      this._addPeer(obj.id);
     });
-    t.onLeave((id) => {
-      if (this._route.get(id) !== kind) return;
-      const other = kind === 'local' ? this.rtc : this.local;
-      if (other && other.peers().includes(id)) this._route.set(id, kind === 'local' ? 'rtc' : 'local');
-      else { this._route.delete(id); this._removePeer(id); }
+    for (const ch of this._handlers.keys()) if (ch !== UGID) this._forward(sub, ch);
+    t.onPeer((subPeer) => t.send(UGID, { id: this.id }, subPeer));
+    t.onLeave((subPeer) => {
+      const key = name + ':' + subPeer;
+      const canonical = this._canon.get(key);
+      if (!canonical) return;
+      this._canon.delete(key);
+      const routes = (this._routes.get(canonical) || []).filter((r) => !(r.sub === sub && r.subPeer === subPeer));
+      if (routes.length) this._routes.set(canonical, routes);
+      else { this._routes.delete(canonical); this._removePeer(canonical); }
+    });
+    return sub;
+  }
+  _forward(sub, channel) {
+    if (sub._fwd && sub._fwd.has(channel)) return;
+    if (!sub._fwd) sub._fwd = new Set();
+    sub._fwd.add(channel);
+    sub.t.on(channel, (obj, subPeer) => {
+      const canonical = this._canon.get(sub.name + ':' + subPeer);
+      if (!canonical) return;                       // before the handshake: the session repeats what matters
+      const routes = this._routes.get(canonical);
+      if (routes && routes[0].sub !== sub) return;  // only the best path delivers (no duplicates)
+      this._dispatch(channel, obj, canonical);
     });
   }
-  _forward(t, kind, channel) {
-    const key = kind + ':' + channel;
-    if (this._subs.has(key)) return;
-    this._subs.add(key);
-    t.on(channel, (obj, from) => { if (this._route.get(from) === kind || !this._route.has(from)) this._dispatch(channel, obj, from); });
-  }
-  _channelAdded(channel) {
-    this._forward(this.local, 'local', channel);
-    if (this.rtc) this._forward(this.rtc, 'rtc', channel);
-  }
+  _channelAdded(channel) { if (channel !== UGID) for (const sub of this.subs) this._forward(sub, channel); }
   send(channel, obj, toId = null) {
     if (this.closed) return;
     if (toId !== null) {
-      const route = this._route.get(toId);
-      if (route === 'local') this.local.send(channel, obj, toId);
-      else if (route === 'rtc' && this.rtc) this.rtc.send(channel, obj, toId);
+      const routes = this._routes.get(toId);
+      if (routes && routes.length) routes[0].sub.t.send(channel, obj, routes[0].subPeer);
       return;
     }
-    this.local.send(channel, obj, null);
-    if (this.rtc) for (const p of this.rtc.peers()) if (this._route.get(p) === 'rtc') this.rtc.send(channel, obj, p);
+    for (const [id, routes] of this._routes) if (routes.length) routes[0].sub.t.send(channel, obj, routes[0].subPeer);
   }
+  routeOf(id) { const r = this._routes.get(id); return r && r.length ? r[0].sub.name : null; }
+  get local() { const s = this.subs.find((x) => x.kind === 'local'); return s ? s.t : null; }
+  get rtc() { const s = this.subs.find((x) => x.kind === 'rtc'); return s ? s.t : null; }   // the first signalling path
+  // Signalling health per path plus the peer count.
   status() {
-    const st = this.rtc ? this.rtc.status() : { strategy: null, peers: 0, relays: null, relaysOpen: null };
-    st.localPeers = this.local.peers().length;
-    st.peers = this._peers.size;
-    st.rtcError = this.rtcError ? String(this.rtcError.message || this.rtcError) : null;
-    return st;
+    const paths = [];
+    for (const sub of this.subs) {
+      const st = typeof sub.t.status === 'function' ? sub.t.status() : { peers: sub.t.peers().length };
+      paths.push(Object.assign({ name: sub.name, kind: sub.kind }, st));
+    }
+    const rtcs = paths.filter((p) => p.kind === 'rtc');
+    const relays = rtcs.reduce((n, p) => n + (p.relays || 0), 0), relaysOpen = rtcs.reduce((n, p) => n + (p.relaysOpen || 0), 0);
+    return { strategy: rtcs.map((p) => p.strategy || p.name).join('+') || null, paths, relays: rtcs.length ? relays : null, relaysOpen: rtcs.length ? relaysOpen : null,
+      peers: this._peers.size, localPeers: this.local ? this.local.peers().length : 0, direct: paths.filter((p) => p.kind === 'direct').length,
+      errors: Object.assign({}, this._errors), rtcError: this.rtcError ? String(this.rtcError.message || this.rtcError) : null };
   }
   close() {
     if (this.closed) return;
     super.close();
-    try { this.local.close(); } catch (e) { /* ignore */ }
-    if (this.rtc) { try { this.rtc.close(); } catch (e) { /* ignore */ } }
+    for (const sub of this.subs) { try { sub.t.close(); } catch (e) { /* ignore */ } }
   }
+}
+export { MultiTransport as DualTransport };   // the earlier name
+
+// --------------------------------------------------------------------------------------------- direct
+// One WebRTC data channel set up by hand (see makeInvite / acceptInvite), as a sub-transport with a
+// single peer. Wire format: JSON [channel, data].
+export class DirectTransport extends TransportBase {
+  constructor(channel, opts = {}) {
+    super(opts.id || ('direct-' + randomId(6)));
+    this.kind = 'direct';
+    this.channel = channel;
+    this.peerId = opts.peerId || (this.id + '-peer');
+    this.pc = opts.pc || null;
+    const open = () => this._addPeer(this.peerId);
+    channel.onopen = open;
+    channel.onmessage = (ev) => {
+      let m = null;
+      try { m = JSON.parse(typeof ev.data === 'string' ? ev.data : String(ev.data)); } catch (e) { return; }
+      if (Array.isArray(m) && typeof m[0] === 'string') this._dispatch(m[0], m[1], this.peerId);
+    };
+    channel.onclose = () => { this._removePeer(this.peerId); };
+    channel.onerror = () => { this._removePeer(this.peerId); };
+    if (channel.readyState === 'open') open();
+  }
+  status() { return { peers: this._peers.size, state: this.channel.readyState }; }
+  send(channel, obj, toId = null) {
+    if (this.closed || this.channel.readyState !== 'open') return;
+    if (toId !== null && toId !== this.peerId) return;
+    try { this.channel.send(JSON.stringify([channel, obj])); } catch (e) { console.warn('direct send failed', e); }
+  }
+  close() {
+    if (this.closed) return;
+    super.close();
+    try { this.channel.close(); } catch (e) { /* ignore */ }
+    if (this.pc) { try { this.pc.close(); } catch (e) { /* ignore */ } }
+  }
+}
+
+// ---- hand-made signalling: the offer travels in a link, the answer comes back as a code (any chat)
+const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+function b64url(bytes) { let out = ''; for (let i = 0; i < bytes.length; i += 3) { const n = (bytes[i] << 16) | ((bytes[i + 1] || 0) << 8) | (bytes[i + 2] || 0); out += B64[n >> 18] + B64[(n >> 12) & 63] + (i + 1 < bytes.length ? B64[(n >> 6) & 63] : '') + (i + 2 < bytes.length ? B64[n & 63] : ''); } return out; }
+function unb64url(str) { const idx = {}; for (let i = 0; i < 64; i++) idx[B64[i]] = i; const out = []; let buf = 0, bits = 0; for (const ch of str) { if (idx[ch] === undefined) continue; buf = (buf << 6) | idx[ch]; bits += 6; if (bits >= 8) { bits -= 8; out.push((buf >> bits) & 255); } } return new Uint8Array(out); }
+async function pipeBytes(bytes, stream) {
+  const w = stream.writable.getWriter(); w.write(bytes); w.close();
+  const r = stream.readable.getReader(); const chunks = []; let n = 0;
+  for (;;) { const { value, done } = await r.read(); if (done) break; chunks.push(value); n += value.length; }
+  const out = new Uint8Array(n); let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; } return out;
+}
+// Compact text for an SDP: deflate-raw + base64url when the browser has CompressionStream, else plain.
+export async function encodeSignal(obj) {
+  const raw = new TextEncoder().encode(JSON.stringify(obj));
+  if (typeof CompressionStream !== 'undefined') { try { return 'z' + b64url(await pipeBytes(raw, new CompressionStream('deflate-raw'))); } catch (e) { /* fall through */ } }
+  return 'r' + b64url(raw);
+}
+export async function decodeSignal(text) {
+  text = String(text || '').trim();
+  const body = unb64url(text.slice(1));
+  const raw = text[0] === 'z' ? await pipeBytes(body, new DecompressionStream('deflate-raw')) : body;
+  return JSON.parse(new TextDecoder().decode(raw));
+}
+function gathered(pc, ms = 4000) {
+  return new Promise((resolve) => {
+    if (pc.iceGatheringState === 'complete') { resolve(); return; }
+    const done = () => { pc.removeEventListener('icegatheringstatechange', check); resolve(); };
+    const check = () => { if (pc.iceGatheringState === 'complete') done(); };
+    pc.addEventListener('icegatheringstatechange', check);
+    setTimeout(done, ms);
+  });
+}
+// Host side: a connection waiting for one friend. Returns the sub-transport to add to the MultiTransport
+// and the offer text for the link; complete(answerText) finishes the handshake.
+export async function makeInvite({ rtcConfig = DEFAULT_RTC_CONFIG, id } = {}) {
+  const pc = new RTCPeerConnection(rtcConfig);
+  const channel = pc.createDataChannel('ungroup', { ordered: true });
+  const t = new DirectTransport(channel, { pc, id });
+  await pc.setLocalDescription(await pc.createOffer());
+  await gathered(pc);
+  const offer = await encodeSignal({ v: 1, sdp: pc.localDescription.sdp });
+  return { transport: t, pc, offer, complete: async (answerText) => { const a = await decodeSignal(answerText); if (!a || a.v !== 1 || !a.sdp) throw new Error('that is not a reply code'); await pc.setRemoteDescription({ type: 'answer', sdp: a.sdp }); } };
+}
+// Friend side: take the offer from the link, produce the reply code.
+export async function acceptInvite(offerText, { rtcConfig = DEFAULT_RTC_CONFIG, id } = {}) {
+  const o = await decodeSignal(offerText);
+  if (!o || o.v !== 1 || !o.sdp) throw new Error('that is not an invite');
+  const pc = new RTCPeerConnection(rtcConfig);
+  let resolveChannel;
+  const channelReady = new Promise((r) => { resolveChannel = r; });
+  pc.ondatachannel = (ev) => resolveChannel(ev.channel);
+  await pc.setRemoteDescription({ type: 'offer', sdp: o.sdp });
+  await pc.setLocalDescription(await pc.createAnswer());
+  await gathered(pc);
+  const answer = await encodeSignal({ v: 1, sdp: pc.localDescription.sdp });
+  return { pc, answer, channelReady, attach: async (multi) => { const ch = await channelReady; const t = new DirectTransport(ch, { pc, id }); multi.add(t.id, 'direct', t); return t; } };
 }
 
 async function loadTrystero(strategies) {
@@ -308,25 +429,44 @@ async function loadTrystero(strategies) {
   throw new Error('could not load Trystero from the CDN (' + (lastErr && lastErr.message) + ')');
 }
 
-// Factory. 'local' is the BroadcastChannel alone. 'rtc' is a DualTransport: the BroadcastChannel plus
-// Trystero under Trystero's peer id (peers appear asynchronously through onPeer); when no strategy module
-// can be loaded it falls back to the BroadcastChannel alone with `rtcError` set, unless `strict` is on.
-// 'rtc-only' is the bare RtcTransport.
+// Factory. 'local' is the BroadcastChannel alone. 'rtc' is a MultiTransport: the BroadcastChannel at
+// once, then every signalling strategy as its module loads (each joining the same room; peers are
+// deduplicated by the handshake); `ready` resolves when every strategy has loaded or failed, `rtcError`
+// is set when none loaded (with `strict`, that rejects). 'rtc-only' is the bare RtcTransport of the
+// first strategy that loads.
 export async function createTransport({ kind = 'local', room, appId = DEFAULT_APP_ID, strategies = TRYSTERO_STRATEGIES, rtcConfig = DEFAULT_RTC_CONFIG, password, strict = false, localOpts = {} } = {}) {
   if (!room) throw new Error('createTransport: room is required');
   if (kind === 'local') return new LocalTransport(room, localOpts);
-  if (kind === 'rtc' || kind === 'rtc-only') {
-    let loaded = null, err = null;
-    try { loaded = await loadTrystero(strategies); } catch (e) { err = e; if (strict || kind === 'rtc-only') throw e; }
-    if (!loaded) { const t = new DualTransport(new LocalTransport(room, localOpts)); t.rtcError = err; return t; }
-    const { mod, strategy } = loaded;
+  if (kind === 'rtc-only') {
+    const { mod, strategy } = await loadTrystero(strategies);
     const cfg = { appId };
     if (rtcConfig) cfg.rtcConfig = rtcConfig;
     if (password) cfg.password = password;
-    const id = mod.selfId || randomId();
-    const rtc = new RtcTransport(mod.joinRoom(cfg, room), id, strategy, mod);
-    if (kind === 'rtc-only') return rtc;
-    return new DualTransport(new LocalTransport(room, Object.assign({}, localOpts, { id })), rtc);
+    return new RtcTransport(mod.joinRoom(cfg, room), mod.selfId || randomId(), strategy, mod);
+  }
+  if (kind === 'rtc') {
+    const id = (localOpts && localOpts.id) || randomId();
+    const multi = new MultiTransport(id, new LocalTransport(room, Object.assign({}, localOpts, { id })));
+    const loads = strategies.map(async (st) => {
+      try {
+        const mod = await import(/* @vite-ignore */ st.url);
+        if (typeof mod.joinRoom !== 'function') throw new Error('no joinRoom export in ' + st.url);
+        const cfg = { appId };
+        if (rtcConfig) cfg.rtcConfig = rtcConfig;
+        if (password) cfg.password = password;
+        if (st.relayUrls) cfg.relayUrls = st.relayUrls.slice();
+        if (st.relayRedundancy) cfg.relayRedundancy = st.relayRedundancy;
+        if (multi.closed) return false;
+        multi.add('rtc:' + st.name, 'rtc', new RtcTransport(mod.joinRoom(cfg, room), mod.selfId || randomId(), st.name, mod));
+        return true;
+      } catch (e) { console.warn('trystero strategy unavailable:', st.name, e && e.message); multi._errors[st.name] = String(e && e.message || e); return false; }
+    });
+    multi.ready = Promise.all(loads).then((oks) => {
+      if (!oks.some(Boolean)) multi.rtcError = new Error('could not load Trystero from the CDN (' + Object.values(multi._errors).join('; ') + ')');
+      return multi;
+    });
+    if (strict) { await multi.ready; if (multi.rtcError) { multi.close(); throw multi.rtcError; } }
+    return multi;
   }
   throw new Error('unknown transport kind ' + kind);
 }
